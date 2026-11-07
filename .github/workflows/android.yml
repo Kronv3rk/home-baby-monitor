@@ -1,0 +1,74 @@
+name: Android CI and APK preview
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Test, lint and assemble
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK 36
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --install 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Unit tests, lint, build
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Name test APK
+        run: |
+          mkdir -p distribution
+          cp app/build/outputs/apk/debug/app-debug.apk distribution/HomeBabyMonitor-v0.3.1-debug.apk
+          sha256sum distribution/HomeBabyMonitor-v0.3.1-debug.apk > distribution/SHA256SUMS.txt
+      - name: Upload installable test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: HomeBabyMonitor-v0.3.1-APK
+          path: distribution/*
+          if-no-files-found: error
+          retention-days: 30
+
+  preview-release:
+    name: Publish prerelease
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: android
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested APK
+        uses: actions/download-artifact@v4
+        with:
+          name: HomeBabyMonitor-v0.3.1-APK
+          path: distribution
+      - name: Create test release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view v0.3.1 >/dev/null 2>&1; then
+            echo 'Preview release v0.3.1 already exists; avoiding overwrite.'
+          else
+            gh release create v0.3.1 distribution/HomeBabyMonitor-v0.3.1-debug.apk distribution/SHA256SUMS.txt \
+              --target "$GITHUB_SHA" --title 'HomeBabyMonitor v0.3.1 — Android preview' \
+              --notes 'Экспериментальная локальная видеоняня. Android 8+. Не проверена на реальных устройствах; не используйте как единственное средство наблюдения за ребёнком.' \
+              --prerelease
+          fi

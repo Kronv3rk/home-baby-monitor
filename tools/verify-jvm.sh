@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+testdir="$(mktemp -d)"
+trap 'rm -rf "$testdir"' EXIT
+# Compile the production protocol and the real TCP server/connector ONCE with
+# minimal Android platform stubs, then execute all independent smoke programs.
+kotlinc \
+  app/src/main/java/com/homebabymonitor/core/*.kt \
+  app/src/main/java/com/homebabymonitor/net/*.kt \
+  tools/jvm-stubs/android/content/*.kt \
+  tools/jvm-stubs/android/net/*.kt \
+  tools/jvm-stubs/android/util/*.kt \
+  tools/jvm-stubs/android/os/*.kt \
+  tools/CoreSmokeTest.kt \
+  tools/LocalSocketSmokeTest.kt \
+  tools/SessionWatchdogSmokeTest.kt \
+  tools/ProtocolStressTest.kt \
+  tools/SecureChannelSmokeTest.kt \
+  tools/ServerIntegrationSmokeTest.kt \
+  -include-runtime -d "$testdir/tests.jar"
+for test in CoreSmokeTest LocalSocketSmokeTest SessionWatchdogSmokeTest ProtocolStressTest SecureChannelSmokeTest ServerIntegrationSmokeTest; do
+  echo "Running $test"
+  java -cp "$testdir/tests.jar" "${test}Kt"
+done
