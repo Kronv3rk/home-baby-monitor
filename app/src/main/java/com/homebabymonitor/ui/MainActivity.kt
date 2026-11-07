@@ -32,6 +32,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.homebabymonitor.MonitorBus
@@ -150,6 +151,7 @@ private fun Screen(
     state: MonitorState, startBaby: () -> Unit, startParent: (String, String) -> Unit,
     stop: () -> Unit, talk: (Boolean) -> Unit, night: (Boolean) -> Unit, torch: (Boolean) -> Unit
 ) {
+    val legalLinks = LocalUriHandler.current
     var ip by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
     var setupParent by remember { mutableStateOf(false) }
@@ -270,6 +272,18 @@ private fun Screen(
                         Text(state.error, color = Color.White, fontSize = 13.sp)
                     }
                 }
+            }
+            Text("Экспериментальный прототип. Не используйте как единственное средство наблюдения за ребёнком.", color = muted, fontSize = 12.sp, lineHeight = 18.sp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { legalLinks.openUri("https://github.com/Kronv3rk/home-baby-monitor/blob/main/PRIVACY.md") }) {
+                    Text("Конфиденциальность", fontSize = 12.sp)
+                }
+                TextButton(onClick = { legalLinks.openUri("https://github.com/Kronv3rk/home-baby-monitor/blob/main/THIRD_PARTY_NOTICES.md") }) {
+                    Text("Лицензии", fontSize = 12.sp)
+                }
+            }
+            TextButton(onClick = { legalLinks.openUri("https://github.com/Kronv3rk/home-baby-monitor/blob/main/SAFETY_AND_TERMS.md") }) {
+                Text("Безопасность и условия использования", fontSize = 12.sp)
             }
             Spacer(Modifier.height(20.dp))
         }
