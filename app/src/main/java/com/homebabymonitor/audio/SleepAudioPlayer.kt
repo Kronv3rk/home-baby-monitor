@@ -7,6 +7,7 @@ import android.os.SystemClock
 import com.homebabymonitor.core.SleepSound
 import java.util.Random
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.pow
@@ -15,6 +16,7 @@ import kotlin.math.sin
 /** Locally synthesised audio: no recordings, downloads or third-party music files. */
 class SleepAudioPlayer(private val onError: (String) -> Unit) {
     private val running = AtomicBoolean(false)
+    private val generation = AtomicLong(0)
     @Volatile private var selected = SleepSound.OFF
     @Volatile private var endAtMs = 0L
     @Volatile private var volumePercent = 20
@@ -23,14 +25,16 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
     fun play(sound: SleepSound, minutes: Int, volume: Int) {
         stop()
         if (sound == SleepSound.OFF) return
+        val sessionId = generation.incrementAndGet()
         selected = sound
         endAtMs = SystemClock.elapsedRealtime() + minutes.coerceIn(1, 60) * 60_000L
         volumePercent = volume.coerceIn(0, 100)
         running.set(true)
-        worker = Thread({ render() }, "sleep-audio").apply { isDaemon = true; start() }
+        worker = Thread({ render(sessionId) }, "sleep-audio").apply { isDaemon = true; start() }
     }
 
     fun stop() {
+        generation.incrementAndGet()
         running.set(false)
         selected = SleepSound.OFF
         worker?.interrupt()
@@ -45,7 +49,7 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
     fun remainingSeconds(): Int = if (currentSound() == SleepSound.OFF) 0
         else ((endAtMs - SystemClock.elapsedRealtime()).coerceAtLeast(0) / 1000L).toInt()
 
-    private fun render() {
+    private fun render(sessionId: Long) {
         val rate = 22050
         val chunk = ShortArray(2205)
         val minBuffer = AudioTrack.getMinBufferSize(
@@ -75,7 +79,7 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
             val box = intArrayOf(72, 69, 67, 64, 65, 67, 69, 60, 64, 67, 72, 67, 64, 62, 60, 60)
             var samplePosition = 0L
             var rain = 0.0
-            while (running.get() && SystemClock.elapsedRealtime() < endAtMs) {
+            while (running.get() && generation.get() == sessionId && SystemClock.elapsedRealtime() < endAtMs) {
                 val kind = selected
                 val gain = (volumePercent / 100.0) * 0.35
                 for (i in chunk.indices) {
@@ -98,7 +102,7 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
                     chunk[i] = (wave * gain * 32767).toInt().coerceIn(-32768, 32767).toShort()
                 }
                 var written = 0
-                while (running.get() && written < chunk.size) {
+                while (running.get() && generation.get() == sessionId && written < chunk.size) {
                     val count = track.write(chunk, written, chunk.size - written, AudioTrack.WRITE_BLOCKING)
                     if (count <= 0) error("Audio output stopped")
                     written += count
@@ -109,8 +113,10 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
         } catch (e: Exception) {
             if (running.get()) onError("Не удалось воспроизвести звук: ${e.message}")
         } finally {
-            running.set(false)
-            selected = SleepSound.OFF
+            if (generation.compareAndSet(sessionId, sessionId + 1)) {
+                running.set(false)
+                selected = SleepSound.OFF
+            }
             try { track?.pause() } catch (_: Exception) {}
             try { track?.flush() } catch (_: Exception) {}
             try { track?.release() } catch (_: Exception) {}
