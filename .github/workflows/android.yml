@@ -45,11 +45,11 @@ jobs:
         run: |
           mkdir -p distribution
           cp app/build/outputs/apk/debug/app-debug.apk distribution/HomeBabyMonitor-v0.4.0-debug.apk
-          sha256sum distribution/HomeBabyMonitor-v0.3.2-debug.apk > distribution/SHA256SUMS.txt
+          sha256sum distribution/HomeBabyMonitor-v0.4.0-debug.apk > distribution/SHA256SUMS.txt
       - name: Upload installable test APK
         uses: actions/upload-artifact@v4
         with:
-          name: HomeBabyMonitor-v0.3.2-APK
+          name: HomeBabyMonitor-v0.4.0-APK
           path: distribution/*
           if-no-files-found: error
           retention-days: 30
@@ -65,18 +65,18 @@ jobs:
       - name: Download tested APK
         uses: actions/download-artifact@v4
         with:
-          name: HomeBabyMonitor-v0.3.2-APK
+          name: HomeBabyMonitor-v0.4.0-APK
           path: distribution
       - name: Create test release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          if gh release view v0.3.2 >/dev/null 2>&1; then
-            echo 'Preview release v0.3.2 already exists; avoiding overwrite.'
+          if gh release view v0.4.0 >/dev/null 2>&1; then
+            echo 'Preview release v0.4.0 already exists; avoiding overwrite.'
           else
-            gh release create v0.3.2 distribution/HomeBabyMonitor-v0.3.2-debug.apk distribution/SHA256SUMS.txt \
-              --target "$GITHUB_SHA" --title 'HomeBabyMonitor v0.3.2 — Android preview' \
+            gh release create v0.4.0 distribution/HomeBabyMonitor-v0.4.0-debug.apk distribution/SHA256SUMS.txt \
+              --target "$GITHUB_SHA" --title 'HomeBabyMonitor v0.4.0 — Android preview' \
               --notes 'Экспериментальная локальная видеоняня. Android 8+. Не проверена на реальных устройствах; не используйте как единственное средство наблюдения за ребёнком.' \
               --prerelease
           fi
