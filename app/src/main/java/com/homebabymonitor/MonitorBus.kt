@@ -20,6 +20,10 @@ data class MonitorState(
     val lastSoundAt: Long = 0,
     val nightMode: Boolean = false,
     val torchOn: Boolean = false,
+    val videoQuality: String = "HD",
+    val actualVideo: String = "",
+    val musicSound: String = "OFF",
+    val musicRemainingSeconds: Int = 0,
     val talking: Boolean = false,
     val error: String = ""
 )

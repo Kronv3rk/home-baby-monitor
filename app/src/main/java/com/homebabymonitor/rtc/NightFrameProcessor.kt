@@ -7,7 +7,7 @@ import org.webrtc.VideoSink
 import java.nio.ByteBuffer
 
 /** Optional software luma lift. It cannot create detail in total darkness or replace infrared optics. */
-class NightFrameProcessor : VideoProcessor {
+class NightFrameProcessor(private val onCapture: (Int, Int) -> Unit = { _, _ -> }) : VideoProcessor {
     @Volatile var enabled: Boolean = false
     @Volatile private var sink: VideoSink? = null
 
@@ -16,6 +16,7 @@ class NightFrameProcessor : VideoProcessor {
     override fun onCapturerStopped() {}
 
     override fun onFrameCaptured(frame: VideoFrame) {
+        onCapture(frame.buffer.width, frame.buffer.height)
         val destination = sink ?: return
         if (!enabled) { destination.onFrame(frame); return }
         val source = frame.buffer.toI420() ?: return

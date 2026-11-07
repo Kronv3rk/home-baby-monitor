@@ -6,6 +6,8 @@
 
 | Компонент | Версия в проекте | Лицензия и источник |
 |---|---|---|
+| ZXing Android Embedded (`com.journeyapps:zxing-android-embedded`) | 4.3.0 | Apache-2.0 — [JourneyApps](https://github.com/journeyapps/zxing-android-embedded) |
+| ZXing Core | Транзитивная зависимость | Apache-2.0 — [ZXing](https://github.com/zxing/zxing) |
 | WebRTC Android SDK (`io.github.webrtc-sdk:android`) | 150.7871.01 | BSD-3-Clause для WebRTC, см. [текст лицензии](licenses/WEBRTC-BSD-3-CLAUSE.txt), [Maven Central](https://central.sonatype.com/artifact/io.github.webrtc-sdk/android) и [проект](https://github.com/webrtc-sdk/android) |
 | AndroidX Activity Compose | 1.10.1 | Apache-2.0 — [AndroidX](https://developer.android.com/jetpack/androidx) |
 | Jetpack Compose BOM и Compose UI / Material3 / Material Icons Extended | BOM 2025.04.01 | Apache-2.0 — [AndroidX](https://developer.android.com/jetpack/compose) |

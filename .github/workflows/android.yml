@@ -44,7 +44,7 @@ jobs:
       - name: Name test APK
         run: |
           mkdir -p distribution
-          cp app/build/outputs/apk/debug/app-debug.apk distribution/HomeBabyMonitor-v0.3.2-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk distribution/HomeBabyMonitor-v0.4.0-debug.apk
           sha256sum distribution/HomeBabyMonitor-v0.3.2-debug.apk > distribution/SHA256SUMS.txt
       - name: Upload installable test APK
         uses: actions/upload-artifact@v4

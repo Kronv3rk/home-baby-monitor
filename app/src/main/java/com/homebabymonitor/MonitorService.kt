@@ -17,6 +17,10 @@ import android.net.wifi.WifiManager
 import android.os.*
 import android.util.Log
 import com.homebabymonitor.core.PairingCode
+import com.homebabymonitor.core.VideoQuality
+import com.homebabymonitor.core.SleepSound
+import com.homebabymonitor.core.SleepCommand
+import com.homebabymonitor.audio.SleepAudioPlayer
 import com.homebabymonitor.core.SessionWatchdog
 import com.homebabymonitor.core.LocalAddress
 import com.homebabymonitor.core.WireMessage
@@ -40,6 +44,12 @@ class MonitorService : Service() {
         const val ACTION_TALK = "com.homebabymonitor.TALK"
         const val ACTION_NIGHT = "com.homebabymonitor.NIGHT"
         const val ACTION_TORCH = "com.homebabymonitor.TORCH"
+        const val ACTION_QUALITY = "com.homebabymonitor.QUALITY"
+        const val ACTION_MUSIC = "com.homebabymonitor.MUSIC"
+        const val EXTRA_PROFILE = "profile"
+        const val EXTRA_SOUND = "sound"
+        const val EXTRA_DURATION = "duration"
+        const val EXTRA_VOLUME = "volume"
         const val EXTRA_IP = "ip"
         const val EXTRA_PIN = "pin"
         const val EXTRA_VALUE = "value"
@@ -64,6 +74,8 @@ class MonitorService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var torchOn = false
+    private var qualityPending = true
+    private val sleepPlayer by lazy { SleepAudioPlayer { error -> MonitorBus.mutate { it.copy(error = error) } } }
     private var formerAudioMode: Int? = null
 
     override fun onBind(intent: Intent?) = null
@@ -91,6 +103,23 @@ class MonitorService : Service() {
                 val value = intent.getBooleanExtra(EXTRA_VALUE, false)
                 if (role == Role.PARENT) engine?.sendControl("TORCH:${if (value) 1 else 0}")
                 else if (role == Role.BABY) updateTorch(value)
+            }
+            ACTION_QUALITY -> {
+                val value = intent.getStringExtra(EXTRA_PROFILE)?.let(VideoQuality::fromWire)
+                if (value != null && role == Role.PARENT) {
+                    qualityPending = true
+                    MonitorBus.mutate { it.copy(videoQuality = value.name) }
+                }
+            }
+            ACTION_MUSIC -> {
+                val sound = intent.getStringExtra(EXTRA_SOUND)?.let(SleepSound::fromWire)
+                val minutes = intent.getIntExtra(EXTRA_DURATION, 30)
+                val volume = intent.getIntExtra(EXTRA_VOLUME, 20)
+                if (role == Role.PARENT && sound != null && minutes in setOf(10, 30, 60) && volume in 0..100) {
+                    if (engine?.sendControl(SleepCommand(sound, minutes, volume).encode()) == true) {
+                        MonitorBus.mutate { it.copy(musicSound = sound.name) }
+                    } else MonitorBus.mutate { it.copy(error = "Нет связи с камерой") }
+                }
             }
             ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
         }
@@ -120,6 +149,7 @@ class MonitorService : Service() {
         iceConnected.set(false)
         firstVideoFrameReceived.set(false)
         alarmedForOutage = false
+        qualityPending = true
         watchdog.started(SystemClock.elapsedRealtime())
         MonitorBus.state.value = MonitorState(
             role = newRole,
@@ -142,6 +172,10 @@ class MonitorService : Service() {
                 onConnection = { connected -> onMediaConnection(connected) },
                 onControl = { message -> handleControl(message) },
                 onVideoFrame = { onVideoFrameReceived() },
+                onCaptureMetrics = { metrics ->
+                    MonitorBus.mutate { it.copy(actualVideo = metrics) }
+                    engine?.sendControl("VIDEO_INFO:$metrics")
+                },
                 onError = { error -> MonitorBus.mutate { it.copy(error = error) } }
             ).also { it.start() }
         } catch (e: Exception) {
@@ -226,6 +260,8 @@ class MonitorService : Service() {
         iceConnected.set(false)
         firstVideoFrameReceived.set(false)
         engine?.closePeer()
+        sleepPlayer.stop()
+        qualityPending = true
         MonitorBus.mutate { state -> state.copy(connected = false, status =
             if (state.error.startsWith("Неверный")) state.status else "Связь прервана — переподключение") }
     }
@@ -238,6 +274,39 @@ class MonitorService : Service() {
                 alert("Возможно, ребёнок проснулся", "Камера обнаружила продолжительный громкий звук", 400)
             }
             role == Role.PARENT && message == "PING" -> watchdog.heartbeat(SystemClock.elapsedRealtime())
+            role == Role.PARENT && message.startsWith("VIDEO_INFO:") -> {
+                val info = message.removePrefix("VIDEO_INFO:")
+                if (info.length <= 60) MonitorBus.mutate { it.copy(actualVideo = info) }
+            }
+            role == Role.BABY && message.startsWith("QUALITY:") -> {
+                VideoQuality.fromWire(message.removePrefix("QUALITY:"))?.let { profile ->
+                    engine?.setQuality(profile)
+                    MonitorBus.mutate { it.copy(videoQuality = profile.name) }
+                    engine?.sendControl("QUALITY_STATUS:${profile.name}")
+                }
+            }
+            role == Role.PARENT && message.startsWith("QUALITY_STATUS:") -> {
+                VideoQuality.fromWire(message.removePrefix("QUALITY_STATUS:"))?.let { profile ->
+                    MonitorBus.mutate { it.copy(videoQuality = profile.name) }
+                }
+            }
+            role == Role.BABY && message.startsWith("MUSIC:") -> {
+                SleepCommand.parse(message)?.let { command ->
+                    sleepPlayer.play(command.sound, command.minutes, command.volume)
+                    MonitorBus.mutate { it.copy(musicSound = command.sound.name) }
+                    engine?.sendControl("MUSIC_STATE:${command.sound.name}:${sleepPlayer.remainingSeconds()}")
+                }
+            }
+            role == Role.PARENT && message.startsWith("MUSIC_STATE:") -> {
+                val parts = message.split(':')
+                if (parts.size == 3) {
+                    val sound = SleepSound.fromWire(parts[1])
+                    val remaining = parts[2].toIntOrNull()
+                    if (sound != null && remaining != null && remaining in 0..3600) {
+                        MonitorBus.mutate { it.copy(musicSound = sound.name, musicRemainingSeconds = remaining) }
+                    }
+                }
+            }
             role == Role.PARENT && message.startsWith("BATTERY:") -> {
                 val parts = message.split(':')
                 if (parts.size == 3) {
@@ -287,6 +356,10 @@ class MonitorService : Service() {
             pipe?.send(WireMessage.Ping)
             if (role == Role.BABY) {
                 engine?.sendControl("PING")
+                val sound = sleepPlayer.currentSound()
+                val remaining = sleepPlayer.remainingSeconds()
+                MonitorBus.mutate { it.copy(musicSound = sound.name, musicRemainingSeconds = remaining) }
+                engine?.sendControl("MUSIC_STATE:${sound.name}:$remaining")
                 val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
                 if (battery != null) {
                     val level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
@@ -296,6 +369,9 @@ class MonitorService : Service() {
                     if (level >= 0 && scale > 0) engine?.sendControl("BATTERY:${level * 100 / scale}:${if (charging) 1 else 0}")
                 }
             } else if (role == Role.PARENT) {
+                if (qualityPending && engine?.sendControl("QUALITY:${MonitorBus.state.value.videoQuality}") == true) {
+                    qualityPending = false
+                }
                 val problem = watchdog.problem(SystemClock.elapsedRealtime())
                 if (problem != null && !alarmedForOutage) {
                     alarmedForOutage = true
@@ -402,6 +478,7 @@ class MonitorService : Service() {
 
     override fun onDestroy() {
         running.set(false)
+        sleepPlayer.stop()
         ticker?.shutdownNow(); ticker = null
         connector?.stop(); connector = null
         server?.stop(); server = null

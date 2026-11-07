@@ -16,8 +16,9 @@ kotlinc \
   tools/ProtocolStressTest.kt \
   tools/SecureChannelSmokeTest.kt \
   tools/ServerIntegrationSmokeTest.kt \
+  tools/InteractionSmokeTest.kt \
   -include-runtime -d "$testdir/tests.jar"
-for test in CoreSmokeTest LocalSocketSmokeTest SessionWatchdogSmokeTest ProtocolStressTest SecureChannelSmokeTest ServerIntegrationSmokeTest; do
+for test in CoreSmokeTest LocalSocketSmokeTest SessionWatchdogSmokeTest ProtocolStressTest SecureChannelSmokeTest ServerIntegrationSmokeTest InteractionSmokeTest; do
   echo "Running $test"
   java -cp "$testdir/tests.jar" "${test}Kt"
 done

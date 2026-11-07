@@ -19,8 +19,31 @@ import com.homebabymonitor.MonitorService
 import com.homebabymonitor.Role
 import com.homebabymonitor.core.LocalAddress
 import com.homebabymonitor.core.PairingCode
+import com.homebabymonitor.core.PairingLink
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 class MainActivity : ComponentActivity() {
+    private val barcodeScan = registerForActivityResult(ScanContract()) { result ->
+        if (result.contents != null) {
+            val target = PairingLink.parse(result.contents)
+            if (target == null) MonitorBus.mutate { it.copy(error = "Неверный QR-код") }
+            else startSession(Role.PARENT, target.ip, target.code)
+        }
+    }
+    private val cameraForQr = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) openQrScanner()
+        else MonitorBus.mutate { it.copy(error = "Для сканирования нужен доступ к камере") }
+    }
+    private fun openQrScanner() {
+        barcodeScan.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            .setPrompt("Наведите камеру на QR-код").setBeepEnabled(false).setOrientationLocked(false))
+    }
+    private fun scanQr() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+            openQrScanner()
+        else cameraForQr.launch(Manifest.permission.CAMERA)
+    }
     private var pendingStart: (() -> Unit)? = null
     private var pendingRequired: List<String> = emptyList()
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -107,10 +130,25 @@ class MainActivity : ComponentActivity() {
                 MonitorScreen(state,
                     startBaby = { startSession(Role.BABY, "", "") },
                     startParent = { ip, pin -> startSession(Role.PARENT, ip, pin) },
+                    scanQr = { scanQr() },
                     stop = { sendCommand(MonitorService.ACTION_STOP) },
                     talk = { on -> sendCommand(MonitorService.ACTION_TALK, on) },
                     night = { on -> sendCommand(MonitorService.ACTION_NIGHT, on) },
-                    torch = { on -> sendCommand(MonitorService.ACTION_TORCH, on) }
+                    torch = { on -> sendCommand(MonitorService.ACTION_TORCH, on) },
+                    quality = { profile ->
+                        startService(Intent(this, MonitorService::class.java).apply {
+                            action = MonitorService.ACTION_QUALITY
+                            putExtra(MonitorService.EXTRA_PROFILE, profile.name)
+                        })
+                    },
+                    music = { sound, minutes, volume ->
+                        startService(Intent(this, MonitorService::class.java).apply {
+                            action = MonitorService.ACTION_MUSIC
+                            putExtra(MonitorService.EXTRA_SOUND, sound.name)
+                            putExtra(MonitorService.EXTRA_DURATION, minutes)
+                            putExtra(MonitorService.EXTRA_VOLUME, volume)
+                        })
+                    }
                 )
             }
         }

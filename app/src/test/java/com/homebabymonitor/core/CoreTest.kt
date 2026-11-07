@@ -88,4 +88,23 @@ class CoreTest {
         assertNull(watchdog.problem(56000))
     }
 
+    @Test fun qrPairingAcceptsOnlyPrivateAddress() {
+        val secret = PairingCode.generate()
+        val link = PairingLink.create("192.168.1.25", secret)
+        assertEquals("192.168.1.25", PairingLink.parse(link)?.ip)
+        assertEquals(PairingCode.normalize(secret), PairingLink.parse(link)?.code)
+        assertNull(PairingLink.parse("hbm://pair?v=1&ip=8.8.8.8&key=0123456789ABCDEFGHJK"))
+    }
+
+    @Test fun twoK60PrioritizesFrameRateWhenCameraCannotDoBoth() {
+        val formats = listOf(CaptureOption(2560, 1440, 30), CaptureOption(1920, 1080, 60))
+        assertEquals(CaptureOption(1920, 1080, 60), VideoQuality.QHD_60.chooseFormat(formats))
+        assertEquals(60, VideoQuality.QHD_60.fps)
+    }
+
+    @Test fun musicCommandRejectsInvalidValues() {
+        val request = SleepCommand(SleepSound.MUSIC_BOX, 30, 20)
+        assertEquals(request, SleepCommand.parse(request.encode()))
+        assertNull(SleepCommand.parse("MUSIC:RAIN:999:99"))
+    }
 }
