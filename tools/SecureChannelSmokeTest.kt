@@ -35,10 +35,10 @@ fun main() {
         val worker = thread {
             listener.accept().use { sock ->
                 val pipe = SignalPipe(sock)
-                val clientNonce = (pipe.read() as WireMessage.Hello).value
+                val incomingNonce = (pipe.read() as WireMessage.Hello).value
                 val serverNonce = PairingCode.newChallenge()
                 check(pipe.send(WireMessage.Challenge(serverNonce)))
-                pipe.enableSecure(code, "$clientNonce.$serverNonce", isServer = true)
+                pipe.enableSecure(code, "$incomingNonce.$serverNonce", isServer = true)
                 check(pipe.read() == WireMessage.Proof)
                 check(pipe.send(WireMessage.Accept))
                 check(pipe.read() == WireMessage.Ping)
@@ -46,10 +46,10 @@ fun main() {
         }
         Socket("127.0.0.1", listener.localPort).use { sock ->
             val pipe = SignalPipe(sock)
-            val clientNonce = PairingCode.newChallenge()
-            check(pipe.send(WireMessage.Hello(clientNonce)))
+            val outgoingNonce = PairingCode.newChallenge()
+            check(pipe.send(WireMessage.Hello(outgoingNonce)))
             val serverNonce = (pipe.read() as WireMessage.Challenge).value
-            pipe.enableSecure(code, "$clientNonce.$serverNonce", isServer = false)
+            pipe.enableSecure(code, "$outgoingNonce.$serverNonce", isServer = false)
             check(pipe.send(WireMessage.Proof))
             check(pipe.read() == WireMessage.Accept)
             check(pipe.send(WireMessage.Ping))

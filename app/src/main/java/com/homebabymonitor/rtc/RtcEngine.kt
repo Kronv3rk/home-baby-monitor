@@ -13,7 +13,6 @@ import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Media is WebRTC DTLS-SRTP, ICE contains only local host candidates (no STUN/TURN servers). */
 class RtcEngine(
     private val context: Context,
     private val role: Role,
@@ -32,7 +31,6 @@ class RtcEngine(
     private var videoTrack: VideoTrack? = null
     private var audioSource: AudioSource? = null
     private var audioTrack: AudioTrack? = null
-    private var audioDevice: JavaAudioDeviceModule? = null
     private var factory: PeerConnectionFactory? = null
     @Volatile private var peer: PeerConnection? = null
     @Volatile private var channel: DataChannel? = null
@@ -68,13 +66,12 @@ class RtcEngine(
                 }
             }
             .createAudioDeviceModule()
-        audioDevice = module
         factory = PeerConnectionFactory.builder()
             .setAudioDeviceModule(module)
             .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl.eglBaseContext, true, true))
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl.eglBaseContext))
             .createPeerConnectionFactory()
-        // The factory retains the native audio-device handle.
+        // PeerConnectionFactory retains the native audio module after release().
         module.release()
         audioSource = factory?.createAudioSource(MediaConstraints())
         audioTrack = factory?.createAudioTrack("microphone", audioSource)

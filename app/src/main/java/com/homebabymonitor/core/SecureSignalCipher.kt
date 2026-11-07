@@ -36,8 +36,14 @@ object PairingCode {
     }
     fun newChallenge(): String = Base64.getUrlEncoder().withoutPadding()
         .encodeToString(ByteArray(16).also(rng::nextBytes))
-    fun validChallenge(value: String): Boolean = value.length == 22 &&
-        runCatching { decoder.decode(value).size == 16 && Base64.getUrlEncoder().withoutPadding().encodeToString(decoder.decode(value)) == value }.getOrDefault(false)
+    fun validChallenge(value: String): Boolean {
+        if (value.length != 22) return false
+        return runCatching {
+            val decoded = decoder.decode(value)
+            decoded.size == 16 && Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(decoded) == value
+        }.getOrDefault(false)
+    }
 }
 
 /**

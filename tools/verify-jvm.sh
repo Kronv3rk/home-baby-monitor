@@ -3,8 +3,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 testdir="$(mktemp -d)"
 trap 'rm -rf "$testdir"' EXIT
-# Compile the production protocol and the real TCP server/connector ONCE with
-# minimal Android platform stubs, then execute all independent smoke programs.
 kotlinc \
   app/src/main/java/com/homebabymonitor/core/*.kt \
   app/src/main/java/com/homebabymonitor/net/*.kt \
