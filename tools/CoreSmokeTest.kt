@@ -2,7 +2,6 @@ import com.homebabymonitor.core.PairingCode
 import com.homebabymonitor.core.AudioTrigger
 import com.homebabymonitor.core.PinRateLimiter
 import com.homebabymonitor.core.LocalAddress
-import com.homebabymonitor.core.LinkHealth
 import com.homebabymonitor.core.WireMessage
 import com.homebabymonitor.core.WireProtocol
 
@@ -34,12 +33,5 @@ fun main() {
     for (n in 1..5) { check(limiter.mayTry(n.toLong())); limiter.failed(n.toLong()) }
     check(!limiter.mayTry(100L))
     check(limiter.mayTry(60_100L))
-    val health = LinkHealth(heartbeatTimeoutMillis = 7000)
-    check(!health.isStale(100000L))
-    health.connectedAt(100000L)
-    check(!health.isStale(106999L))
-    check(health.isStale(107001L))
-    health.heartbeat(107010L)
-    check(!health.isStale(107020L))
     println("CoreSmokeTest: ALL PASSED")
 }

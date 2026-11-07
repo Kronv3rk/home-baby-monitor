@@ -56,7 +56,7 @@ class MonitorService : Service() {
     @Volatile private var pipe: SignalPipe? = null
     private var ticker: ScheduledExecutorService? = null
     private val watchdog = SessionWatchdog()
-        private var alarmedForOutage = false
+    private var alarmedForOutage = false
     private val running = AtomicBoolean(false)
     private val iceConnected = AtomicBoolean(false)
     private val firstVideoFrameReceived = AtomicBoolean(false)
@@ -94,7 +94,6 @@ class MonitorService : Service() {
             }
             ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
         }
-        // No sticky restart: recent Android versions forbid background camera/mic starts.
         return START_NOT_STICKY
     }
 

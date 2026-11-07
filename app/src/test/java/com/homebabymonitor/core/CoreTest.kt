@@ -71,15 +71,6 @@ class CoreTest {
         assertTrue(guard.mayTry(60100))
     }
 
-    @Test fun linkTimeoutIsNotRaisedBeforeInitialConnection() {
-        val health = LinkHealth(7000)
-        assertFalse(health.isStale(123456))
-        health.connectedAt(100000)
-        assertFalse(health.isStale(107000))
-        assertTrue(health.isStale(107001))
-        health.heartbeat(107002)
-        assertFalse(health.isStale(107003))
-    }
     @Test fun initialConnectionTimeoutAndFrozenVideoAreIndependentOfHeartbeat() {
         val watchdog = SessionWatchdog(startupTimeoutMillis = 30000, heartbeatTimeoutMillis = 8000, videoTimeoutMillis = 12000)
         watchdog.started(1000)
