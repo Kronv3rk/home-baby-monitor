@@ -54,7 +54,19 @@ class RtcEngine(
     @Volatile private var peer: PeerConnection? = null
     @Volatile private var channel: DataChannel? = null
     private var observedVideoTrack: VideoTrack? = null
-    private val frameWatcher = VideoSink { onVideoFrame() }
+    private var receivedFrames = 0
+    private var lastReceivedReport = android.os.SystemClock.elapsedRealtime()
+    private val frameWatcher = VideoSink { frame ->
+        onVideoFrame()
+        receivedFrames++
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastReceivedReport >= 1500) {
+            val fps = (receivedFrames * 1000L / (now - lastReceivedReport)).toInt()
+            receivedFrames = 0
+            lastReceivedReport = now
+            onControl("LOCAL_RECEIVED:${frame.buffer.width}×${frame.buffer.height} · ${fps} к/с")
+        }
+    }
     private var remoteSdpApplied = false
     private val queuedIce = mutableListOf<IceCandidate>()
     private val closing = AtomicBoolean(false)

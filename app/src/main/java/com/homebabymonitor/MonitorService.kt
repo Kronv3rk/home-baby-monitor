@@ -274,10 +274,11 @@ class MonitorService : Service() {
                 alert("Возможно, ребёнок проснулся", "Камера обнаружила продолжительный громкий звук", 400)
             }
             role == Role.PARENT && message == "PING" -> watchdog.heartbeat(SystemClock.elapsedRealtime())
-            role == Role.PARENT && message.startsWith("VIDEO_INFO:") -> {
-                val info = message.removePrefix("VIDEO_INFO:")
-                if (info.length <= 60) MonitorBus.mutate { it.copy(actualVideo = info) }
+            role == Role.PARENT && message.startsWith("LOCAL_RECEIVED:") -> {
+                val measured = message.removePrefix("LOCAL_RECEIVED:")
+                if (measured.length <= 60) MonitorBus.mutate { it.copy(actualVideo = measured) }
             }
+            role == Role.PARENT && message.startsWith("VIDEO_INFO:") -> Unit
             role == Role.BABY && message.startsWith("QUALITY:") -> {
                 VideoQuality.fromWire(message.removePrefix("QUALITY:"))?.let { profile ->
                     engine?.setQuality(profile)
