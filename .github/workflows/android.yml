@@ -3,7 +3,15 @@ name: Android CI and APK preview
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - 'licenses/**'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - 'licenses/**'
   workflow_dispatch:
 
 permissions:
