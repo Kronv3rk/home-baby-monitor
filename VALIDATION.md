@@ -7,7 +7,7 @@
 - `:app:lintDebug` — статическая проверка Android.
 - `:app:assembleDebug` — компиляция и сборка APK.
 
-Версия **0.4.0**: [сборка GitHub Actions № 42424325063](https://github.com/Kronv3rk/home-baby-monitor/actions/runs/42424325063). Android unit-тесты, Lint и сборка APK прошли. ZIP с APK проверен по контрольной сумме SHA-256.
+Версия **0.4.1**: [сборка GitHub Actions № 42424727307](https://github.com/Kronv3rk/home-baby-monitor/actions/runs/42424727307). Android unit-тесты, Lint и сборка APK прошли. SHA-256 установочного APK: `9f1a508f74f4f5c29c504704b5ffb37946e70e6d2179e99caedad373f56ce386`.
 
 ## Что проверяют тесты
 
