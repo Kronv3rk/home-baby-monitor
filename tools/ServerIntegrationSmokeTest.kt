@@ -115,6 +115,28 @@ fun main() {
             }
         } finally { legitimateAfterFailures.stop() }
 
+        // Someone who has seen a QR code must not silently replace a currently
+        // connected parent on a *different* local address.
+        val firstConnected = CountDownLatch(1)
+        val firstLost = AtomicInteger(0)
+        val firstParent = ParentConnector("127.0.0.1", code,
+            { _, _ -> firstConnected.countDown() }, {}, { firstLost.incrementAndGet() }, {})
+        firstParent.start()
+        try {
+            check(firstConnected.await(3, TimeUnit.SECONDS))
+            val intruderConnected = CountDownLatch(1)
+            val intruder = ParentConnector("127.0.0.1", code,
+                { _, _ -> intruderConnected.countDown() }, {}, {}, {},
+                localBindIp = "127.0.0.2")
+            intruder.start()
+            try {
+                check(!intruderConnected.await(1500, TimeUnit.MILLISECONDS)) {
+                    "A second LAN address replaced an active parent with a reused pairing code"
+                }
+                check(firstLost.get() == 0) { "Existing parent was kicked off by another address" }
+            } finally { intruder.stop() }
+        } finally { firstParent.stop() }
+
     } finally { baby.stop() }
     println("ServerIntegrationSmokeTest: ALL PASSED")
 }
