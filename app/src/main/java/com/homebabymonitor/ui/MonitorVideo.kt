@@ -51,14 +51,18 @@ internal fun VideoPane(
                     setEnableHardwareScaler(true)
                     setMirror(false)
                     setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                    tag = false
                     MonitorBus.attachRenderer(this, cameraPreview)
                 }
             },
             update = { renderer ->
-                renderer.setScalingType(
-                    if (crop) RendererCommon.ScalingType.SCALE_ASPECT_FILL
-                    else RendererCommon.ScalingType.SCALE_ASPECT_FIT
-                )
+                if (renderer.tag != crop) {
+                    renderer.setScalingType(
+                        if (crop) RendererCommon.ScalingType.SCALE_ASPECT_FILL
+                        else RendererCommon.ScalingType.SCALE_ASPECT_FIT
+                    )
+                    renderer.tag = crop
+                }
             },
             modifier = Modifier.fillMaxSize(),
             onRelease = { renderer ->
