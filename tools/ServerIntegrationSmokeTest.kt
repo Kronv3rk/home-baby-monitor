@@ -72,6 +72,49 @@ fun main() {
         check(pairingFailed.await(6, TimeUnit.SECONDS)) { "Wrong code was not rejected" }
         wrongParent.stop()
         check(unexpectedDisconnect.get() == 0) { "Unauthenticated client triggered session loss" }
+
+        // A client that connects but sends nothing must not block a different
+        // device from completing a legitimate authentication.
+        Socket().use { idle ->
+            idle.connect(InetSocketAddress("127.0.0.1", 43182), 1000)
+            Thread.sleep(150)
+            val authenticatedDuringIdle = CountDownLatch(1)
+            val legitimate = ParentConnector("127.0.0.1", code,
+                { _, _ -> authenticatedDuringIdle.countDown() }, {}, {}, {})
+            legitimate.start()
+            try {
+                check(authenticatedDuringIdle.await(2500, TimeUnit.MILLISECONDS)) {
+                    "Unauthenticated idle socket blocked legitimate pairing"
+                }
+            } finally { legitimate.stop() }
+        }
+
+        // Rejected attempts from a different LAN address must not lock out
+        // the legitimate parent's address.
+        repeat(5) {
+            Socket().use { wrongSocket ->
+                wrongSocket.bind(InetSocketAddress("127.0.0.2", 0))
+                wrongSocket.connect(InetSocketAddress("127.0.0.1", 43182), 1000)
+                wrongSocket.soTimeout = 3000
+                val wire = SignalPipe(wrongSocket)
+                val hello = PairingCode.newChallenge()
+                check(wire.send(WireMessage.Hello(hello)))
+                val challenge = (wire.read() as WireMessage.Challenge).value
+                wire.enableSecure(PairingCode.generate(), "$hello.$challenge", false)
+                check(wire.send(WireMessage.Proof))
+                check(runCatching { wire.read() }.getOrNull() != WireMessage.Accept)
+            }
+        }
+        val stillAllowed = CountDownLatch(1)
+        val legitimateAfterFailures = ParentConnector("127.0.0.1", code,
+            { _, _ -> stillAllowed.countDown() }, {}, {}, {})
+        legitimateAfterFailures.start()
+        try {
+            check(stillAllowed.await(4000, TimeUnit.MILLISECONDS)) {
+                "Failed authentication from 127.0.0.2 locked out 127.0.0.1"
+            }
+        } finally { legitimateAfterFailures.stop() }
+
     } finally { baby.stop() }
     println("ServerIntegrationSmokeTest: ALL PASSED")
 }

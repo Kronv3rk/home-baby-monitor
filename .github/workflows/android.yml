@@ -41,6 +41,8 @@ jobs:
           cmp PRIVACY.md app/src/main/assets/legal/PRIVACY.md
           cmp SAFETY_AND_TERMS.md app/src/main/assets/legal/SAFETY_AND_TERMS.md
           cmp THIRD_PARTY_NOTICES.md app/src/main/assets/legal/THIRD_PARTY_NOTICES.md
+      - name: Security protocol and socket integration tests
+        run: bash tools/verify-jvm.sh
       - name: Test and compile release
         run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
       - name: Stage unsigned release and signing tools
