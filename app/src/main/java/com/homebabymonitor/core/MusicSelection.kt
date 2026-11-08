@@ -4,7 +4,16 @@ enum class SleepSound(val title: String) {
     OFF("Выключено"),
     LULLABY("Колыбельная"),
     MUSIC_BOX("Шкатулка"),
-    RAIN("Шум дождя");
+    RAIN("Шум дождя"),
+    OCEAN("Морской прибой"),
+    WIND("Тихий ветер"),
+    WHITE_NOISE("Белый шум"),
+    SOFT_NOISE("Мягкий шум"),
+    HEARTBEAT("Сердцебиение"),
+    LULLABY_2("Вторая колыбельная"),
+    BELLS("Тихие колокольчики");
+
+    val melody: Boolean get() = this in setOf(LULLABY, MUSIC_BOX, LULLABY_2, BELLS)
 
     companion object {
         fun fromWire(name: String): SleepSound? = entries.firstOrNull { it.name == name }

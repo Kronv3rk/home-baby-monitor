@@ -45,6 +45,10 @@ class MonitorService : Service() {
         const val ACTION_NIGHT = "com.homebabymonitor.NIGHT"
         const val ACTION_TORCH = "com.homebabymonitor.TORCH"
         const val ACTION_QUALITY = "com.homebabymonitor.QUALITY"
+        const val ACTION_CAMERA_MIC = "com.homebabymonitor.CAMERA_MIC"
+        const val ACTION_SPEAKER = "com.homebabymonitor.SPEAKER"
+        const val ACTION_PLAYBACK_VOLUME = "com.homebabymonitor.PLAYBACK_VOLUME"
+        const val ACTION_MUSIC_VOLUME = "com.homebabymonitor.MUSIC_VOLUME"
         const val ACTION_MUSIC = "com.homebabymonitor.MUSIC"
         const val EXTRA_PROFILE = "profile"
         const val EXTRA_SOUND = "sound"
@@ -77,7 +81,7 @@ class MonitorService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var torchOn = false
-    private var qualityPending = true
+    private fun settings() = getSharedPreferences("monitor-settings", Context.MODE_PRIVATE)
     private val sleepPlayer by lazy { SleepAudioPlayer { error -> MonitorBus.mutate { it.copy(error = error) } } }
     private var formerAudioMode: Int? = null
 
@@ -110,19 +114,63 @@ class MonitorService : Service() {
             }
             ACTION_QUALITY -> {
                 val value = intent.getStringExtra(EXTRA_PROFILE)?.let(VideoQuality::fromWire)
-                if (value != null && role == Role.PARENT) {
-                    qualityPending = true
+                if (role == Role.BABY && value != null) {
+                    settings().edit().putString("camera-quality", value.name).apply()
+                    engine?.setQuality(value)
                     MonitorBus.mutate { it.copy(videoQuality = value.name) }
+                    engine?.sendControl("QUALITY_STATUS:${value.name}")
+                }
+            }
+            ACTION_CAMERA_MIC -> if (role == Role.BABY) {
+                val enabled = intent.getBooleanExtra(EXTRA_VALUE, true)
+                engine?.setCameraMicrophone(enabled)
+                settings().edit().putBoolean("camera-microphone", enabled).apply()
+                MonitorBus.mutate { it.copy(cameraMicEnabled = enabled) }
+                engine?.sendControl("MIC_STATUS:${if (enabled) 1 else 0}")
+            }
+            ACTION_SPEAKER -> if (role != null) {
+                val enabled = intent.getBooleanExtra(EXTRA_VALUE, true)
+                val key = if (role == Role.BABY) "baby-speaker" else "parent-speaker"
+                settings().edit().putBoolean(key, enabled).apply()
+                MonitorBus.mutate { it.copy(speakerEnabled = enabled) }
+                engine?.setPlayback(enabled, MonitorBus.state.value.playbackVolume)
+            }
+            ACTION_PLAYBACK_VOLUME -> if (role != null) {
+                val volume = intent.getIntExtra(EXTRA_VOLUME, -1)
+                if (volume in 0..100) {
+                    val key = if (role == Role.BABY) "baby-volume" else "parent-volume"
+                    settings().edit().putInt(key, volume).apply()
+                    MonitorBus.mutate { it.copy(playbackVolume = volume) }
+                    engine?.setPlayback(MonitorBus.state.value.speakerEnabled, volume)
+                }
+            }
+            ACTION_MUSIC_VOLUME -> {
+                val volume = intent.getIntExtra(EXTRA_VOLUME, -1)
+                if (volume in 0..100) {
+                    if (role == Role.BABY) {
+                        sleepPlayer.setVolume(volume)
+                        MonitorBus.mutate { it.copy(musicVolume = volume) }
+                        engine?.sendControl("MUSIC_VOLUME:$volume")
+                    } else if (role == Role.PARENT && engine?.sendControl("MUSIC_VOLUME:$volume") == true) {
+                        MonitorBus.mutate { it.copy(musicVolume = volume) }
+                    }
                 }
             }
             ACTION_MUSIC -> {
                 val sound = intent.getStringExtra(EXTRA_SOUND)?.let(SleepSound::fromWire)
                 val minutes = intent.getIntExtra(EXTRA_DURATION, 30)
                 val volume = intent.getIntExtra(EXTRA_VOLUME, 20)
-                if (role == Role.PARENT && sound != null && minutes in setOf(10, 30, 60) && volume in 0..100) {
-                    if (engine?.sendControl(SleepCommand(sound, minutes, volume).encode()) == true) {
-                        MonitorBus.mutate { it.copy(musicSound = sound.name) }
-                    } else MonitorBus.mutate { it.copy(error = "Нет связи с камерой") }
+                if (sound != null && minutes in setOf(10, 30, 60) && volume in 0..100) {
+                    if (role == Role.BABY) {
+                        sleepPlayer.play(sound, minutes, volume)
+                        MonitorBus.mutate { it.copy(musicSound = sound.name, musicVolume = volume,
+                            musicRemainingSeconds = sleepPlayer.remainingSeconds()) }
+                        engine?.sendControl("MUSIC_STATE:${sound.name}:${sleepPlayer.remainingSeconds()}:$volume")
+                    } else if (role == Role.PARENT) {
+                        if (engine?.sendControl(SleepCommand(sound, minutes, volume).encode()) == true) {
+                            MonitorBus.mutate { it.copy(musicSound = sound.name, musicVolume = volume) }
+                        } else MonitorBus.mutate { it.copy(error = "Нет связи с камерой") }
+                    }
                 }
             }
             ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
@@ -153,11 +201,19 @@ class MonitorService : Service() {
         iceConnected.set(false)
         firstVideoFrameReceived.set(false)
         alarmedForOutage = false
-        qualityPending = true
         mediaStarted = false
         watchdog.started(SystemClock.elapsedRealtime())
+        val speakerKey = if (newRole == Role.BABY) "baby-speaker" else "parent-speaker"
+        val volumeKey = if (newRole == Role.BABY) "baby-volume" else "parent-volume"
+        val initialQuality = VideoQuality.fromWire(settings().getString("camera-quality", "FHD_30").orEmpty())
+            ?: VideoQuality.FHD_30
         MonitorBus.state.value = MonitorState(
             role = newRole,
+            videoQuality = initialQuality.name,
+            cameraMicEnabled = settings().getBoolean("camera-microphone", true),
+            speakerEnabled = settings().getBoolean(speakerKey, true),
+            playbackVolume = settings().getInt(volumeKey, 100).coerceIn(0, 100),
+            musicVolume = settings().getInt("music-volume", 20).coerceIn(0, 100),
             localIp = LocalIp.current(this),
             pairingPin = if (newRole == Role.BABY) PairingCode.generate() else "",
             remoteIp = ip,
@@ -214,8 +270,13 @@ class MonitorService : Service() {
                     MonitorBus.mutate { it.copy(actualVideo = metrics) }
                     // Receiver frame rate is measured separately by the decoded video sink.
                 },
-                onError = { error -> MonitorBus.mutate { it.copy(error = error) } }
-            ).also { it.start() }
+                onError = { error -> MonitorBus.mutate { it.copy(error = error) } },
+                initialQuality = VideoQuality.fromWire(MonitorBus.state.value.videoQuality) ?: VideoQuality.FHD_30
+            ).also {
+                it.start()
+                it.setCameraMicrophone(MonitorBus.state.value.cameraMicEnabled)
+                it.setPlayback(MonitorBus.state.value.speakerEnabled, MonitorBus.state.value.playbackVolume)
+            }
         } catch (e: LinkageError) {
             Log.e("MonitorService", "WebRTC native library initialization failed", e)
             MonitorBus.mutate { it.copy(error = "Не удалось загрузить видеомодуль на этом телефоне.") }
@@ -311,9 +372,9 @@ class MonitorService : Service() {
         firstVideoFrameReceived.set(false)
         engine?.setTalking(false)
         engine?.closePeer()
-        qualityPending = true
         MonitorBus.mutate {
-            it.copy(connected = false, talking = false, status = "Связь прервана. Подключаемся заново")
+            it.copy(connected = false, talking = false, networkVideo = "",
+                status = "Связь прервана. Подключаемся заново")
         }
     }
 
@@ -329,13 +390,6 @@ class MonitorService : Service() {
                 val measured = message.removePrefix("LOCAL_RECEIVED:")
                 if (measured.length <= 60) MonitorBus.mutate { it.copy(actualVideo = measured) }
             }
-            role == Role.BABY && message.startsWith("QUALITY:") -> {
-                VideoQuality.fromWire(message.removePrefix("QUALITY:"))?.let { profile ->
-                    engine?.setQuality(profile)
-                    MonitorBus.mutate { it.copy(videoQuality = profile.name) }
-                    engine?.sendControl("QUALITY_STATUS:${profile.name}")
-                }
-            }
             role == Role.PARENT && message.startsWith("QUALITY_STATUS:") -> {
                 VideoQuality.fromWire(message.removePrefix("QUALITY_STATUS:"))?.let { profile ->
                     MonitorBus.mutate { it.copy(videoQuality = profile.name) }
@@ -344,18 +398,35 @@ class MonitorService : Service() {
             role == Role.BABY && message.startsWith("MUSIC:") -> {
                 SleepCommand.parse(message)?.let { command ->
                     sleepPlayer.play(command.sound, command.minutes, command.volume)
-                    MonitorBus.mutate { it.copy(musicSound = command.sound.name) }
-                    engine?.sendControl("MUSIC_STATE:${command.sound.name}:${sleepPlayer.remainingSeconds()}")
+                    MonitorBus.mutate { it.copy(musicSound = command.sound.name, musicVolume = command.volume) }
+                    engine?.sendControl("MUSIC_STATE:${command.sound.name}:${sleepPlayer.remainingSeconds()}:${command.volume}")
                 }
             }
             role == Role.PARENT && message.startsWith("MUSIC_STATE:") -> {
                 val parts = message.split(':')
-                if (parts.size == 3) {
+                if (parts.size == 3 || parts.size == 4) {
                     val sound = SleepSound.fromWire(parts[1])
                     val remaining = parts[2].toIntOrNull()
-                    if (sound != null && remaining != null && remaining in 0..3600) {
-                        MonitorBus.mutate { it.copy(musicSound = sound.name, musicRemainingSeconds = remaining) }
+                    val volume = parts.getOrNull(3)?.toIntOrNull()
+                    if (sound != null && remaining != null && remaining in 0..3600 &&
+                        (volume == null || volume in 0..100)) {
+                        MonitorBus.mutate { it.copy(musicSound = sound.name, musicRemainingSeconds = remaining,
+                            musicVolume = volume ?: it.musicVolume) }
                     }
+                }
+            }
+            role == Role.BABY && message.startsWith("MUSIC_VOLUME:") -> {
+                val volume = message.removePrefix("MUSIC_VOLUME:").toIntOrNull()
+                if (volume != null && volume in 0..100) {
+                    sleepPlayer.setVolume(volume)
+                    settings().edit().putInt("music-volume", volume).apply()
+                    MonitorBus.mutate { it.copy(musicVolume = volume) }
+                }
+            }
+            role == Role.PARENT && message.startsWith("MIC_STATUS:") -> {
+                when (message.removePrefix("MIC_STATUS:")) {
+                    "1" -> MonitorBus.mutate { it.copy(cameraMicEnabled = true) }
+                    "0" -> MonitorBus.mutate { it.copy(cameraMicEnabled = false) }
                 }
             }
             role == Role.PARENT && message.startsWith("BATTERY:") -> {
@@ -407,10 +478,12 @@ class MonitorService : Service() {
             pipe?.send(WireMessage.Ping)
             if (role == Role.BABY) {
                 engine?.sendControl("PING")
+                engine?.sendControl("QUALITY_STATUS:${MonitorBus.state.value.videoQuality}")
+                engine?.sendControl("MIC_STATUS:${if (MonitorBus.state.value.cameraMicEnabled) 1 else 0}")
                 val sound = sleepPlayer.currentSound()
                 val remaining = sleepPlayer.remainingSeconds()
                 MonitorBus.mutate { it.copy(musicSound = sound.name, musicRemainingSeconds = remaining) }
-                engine?.sendControl("MUSIC_STATE:${sound.name}:$remaining")
+                engine?.sendControl("MUSIC_STATE:${sound.name}:$remaining:${sleepPlayer.volume()}")
                 val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
                 if (battery != null) {
                     val level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
@@ -420,9 +493,7 @@ class MonitorService : Service() {
                     if (level >= 0 && scale > 0) engine?.sendControl("BATTERY:${level * 100 / scale}:${if (charging) 1 else 0}")
                 }
             } else if (role == Role.PARENT) {
-                if (qualityPending && engine?.sendControl("QUALITY:${MonitorBus.state.value.videoQuality}") == true) {
-                    qualityPending = false
-                }
+                engine?.pollVideoStats { stats -> MonitorBus.mutate { it.copy(networkVideo = stats) } }
                 val problem = watchdog.problem(SystemClock.elapsedRealtime())
                 if (problem != null && !alarmedForOutage) {
                     alarmedForOutage = true

@@ -41,6 +41,10 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
         worker = null
     }
 
+    fun setVolume(percent: Int) { volumePercent = percent.coerceIn(0, 100) }
+
+    fun volume(): Int = volumePercent
+
     fun currentSound(): SleepSound {
         if (selected != SleepSound.OFF && SystemClock.elapsedRealtime() >= endAtMs) stop()
         return selected
@@ -79,6 +83,8 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
             val random = Random(1987)
             val lullaby = intArrayOf(60, 64, 67, 64, 62, 65, 69, 65, 60, 64, 67, 72, 69, 65, 64, 60)
             val box = intArrayOf(72, 69, 67, 64, 65, 67, 69, 60, 64, 67, 72, 67, 64, 62, 60, 60)
+            val lullaby2 = intArrayOf(67, 65, 64, 62, 60, 62, 64, 65, 67, 69, 67, 64, 62, 60, 60, 60)
+            val bells = intArrayOf(76, 72, 79, 74, 72, 76, 81, 79, 76, 74, 72, 67, 69, 72, 72, 72)
             var samplePosition = 0L
             var rain = 0.0
             while (running.get() && generation.get() == sessionId && SystemClock.elapsedRealtime() < endAtMs) {
@@ -86,20 +92,49 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
                 val gain = (volumePercent / 100.0) * 0.35
                 for (i in chunk.indices) {
                     val t = samplePosition++.toDouble() / rate
-                    val wave = if (kind == SleepSound.RAIN) {
-                        rain = rain * 0.94 + (random.nextDouble() * 2.0 - 1.0) * 0.06
-                        rain * 0.65
-                    } else {
-                        val notes = if (kind == SleepSound.MUSIC_BOX) box else lullaby
-                        val secondsPerNote = if (kind == SleepSound.MUSIC_BOX) 0.85 else 1.1
-                        val noteNumber = (t / secondsPerNote).toLong().toInt()
-                        val note = notes[noteNumber % notes.size]
-                        val frequency = 440.0 * 2.0.pow((note - 69) / 12.0)
-                        val local = t % secondsPerNote
-                        val envelope = (1.0 - exp(-local * 35.0)) * exp(-local * if (kind == SleepSound.MUSIC_BOX) 3.6 else 1.8)
-                        val fundamental = sin(2 * PI * frequency * t)
-                        val harmonic = sin(2 * PI * frequency * 2.0 * t) * 0.16
-                        (fundamental + harmonic) * envelope * 0.55
+                    val noise = random.nextDouble() * 2.0 - 1.0
+                    rain = rain * 0.94 + noise * 0.06
+                    val wave = when (kind) {
+                        SleepSound.RAIN -> rain * 0.65
+                        SleepSound.WHITE_NOISE -> noise * 0.22
+                        SleepSound.SOFT_NOISE -> rain * 0.48
+                        SleepSound.OCEAN -> {
+                            val swell = 0.15 + 0.75 * (0.5 + 0.5 * sin(2 * PI * t / 7.0))
+                            rain * swell * 0.64
+                        }
+                        SleepSound.WIND -> {
+                            val gust = 0.35 + 0.25 * sin(2 * PI * t / 13.0)
+                            rain * gust
+                        }
+                        SleepSound.HEARTBEAT -> {
+                            val phase = t % 1.25
+                            val first = if (phase < 0.13) exp(-phase * 34.0) else 0.0
+                            val second = if (phase in 0.21..0.35) exp(-(phase - 0.21) * 38.0) * 0.7 else 0.0
+                            (first + second) * sin(2 * PI * 86.0 * t) * 0.62
+                        }
+                        SleepSound.OFF -> 0.0
+                        else -> {
+                            val notes = when (kind) {
+                                SleepSound.MUSIC_BOX -> box
+                                SleepSound.LULLABY_2 -> lullaby2
+                                SleepSound.BELLS -> bells
+                                else -> lullaby
+                            }
+                            val secondsPerNote = when (kind) {
+                                SleepSound.MUSIC_BOX -> 0.85
+                                SleepSound.BELLS -> 1.25
+                                else -> 1.1
+                            }
+                            val noteNumber = (t / secondsPerNote).toLong().toInt()
+                            val note = notes[noteNumber % notes.size]
+                            val frequency = 440.0 * 2.0.pow((note - 69) / 12.0)
+                            val local = t % secondsPerNote
+                            val decay = if (kind == SleepSound.MUSIC_BOX || kind == SleepSound.BELLS) 3.6 else 1.8
+                            val envelope = (1.0 - exp(-local * 35.0)) * exp(-local * decay)
+                            val fundamental = sin(2 * PI * frequency * t)
+                            val harmonic = sin(2 * PI * frequency * 2.0 * t) * 0.16
+                            (fundamental + harmonic) * envelope * 0.55
+                        }
                     }
                     chunk[i] = (wave * gain * 32767).toInt().coerceIn(-32768, 32767).toShort()
                 }

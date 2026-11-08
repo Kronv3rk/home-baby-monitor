@@ -24,7 +24,8 @@ class RtcEngine(
     private val onControl: (String) -> Unit,
     private val onVideoFrame: () -> Unit,
     private val onCaptureMetrics: (String) -> Unit,
-    private val onError: (String) -> Unit
+    private val onError: (String) -> Unit,
+    initialQuality: VideoQuality = VideoQuality.FHD_30
 ) {
     private val audioDetector = AudioTrigger()
     private var sampleCount = 0
@@ -44,8 +45,14 @@ class RtcEngine(
     private var cameraEnumerator: CameraEnumerator? = null
     private var cameraName: String? = null
     private var videoSender: RtpSender? = null
-    private var qualityProfile = VideoQuality.HD
-    private var currentCapture = CaptureOption(1280, 720, 30)
+    private var qualityProfile = initialQuality
+    private var currentCapture = CaptureOption(initialQuality.width, initialQuality.height, initialQuality.fps)
+    @Volatile private var cameraMicEnabled = true
+    @Volatile private var playbackEnabled = true
+    @Volatile private var playbackVolume = 100
+    private var inboundAudioTrack: AudioTrack? = null
+    private var previousBytes = -1L
+    private var previousStatsTime = 0L
     private var texture: SurfaceTextureHelper? = null
     private var videoSource: VideoSource? = null
     private var videoTrack: VideoTrack? = null
@@ -90,7 +97,7 @@ class RtcEngine(
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
             .setSamplesReadyCallback { samples ->
-                if (role == Role.BABY && samples.audioFormat == AudioFormat.ENCODING_PCM_16BIT) {
+                if (role == Role.BABY && cameraMicEnabled && samples.audioFormat == AudioFormat.ENCODING_PCM_16BIT) {
                     if (audioDetector.feed(samples.data, samples.sampleRate, samples.channelCount, android.os.SystemClock.elapsedRealtime())) {
                         sendControl("SOUND")
                         onControl("LOCAL_SOUND")
@@ -109,7 +116,7 @@ class RtcEngine(
         }
         audioSource = factory?.createAudioSource(MediaConstraints())
         audioTrack = factory?.createAudioTrack("microphone", audioSource)
-        audioTrack?.setEnabled(role == Role.BABY)
+        audioTrack?.setEnabled(role == Role.BABY && cameraMicEnabled)
         if (role == Role.BABY) openCamera()
     }
 
@@ -127,9 +134,10 @@ class RtcEngine(
         texture = SurfaceTextureHelper.create("camera-capture", egl.eglBaseContext)
         capturer?.initialize(texture, context, videoSource?.capturerObserver)
         try {
+            videoTrack = factory?.createVideoTrack("camera", videoSource)
+            MonitorBus.setCameraVideoTrack(videoTrack)
             currentCapture = chooseCapture(qualityProfile)
             capturer?.startCapture(currentCapture.width, currentCapture.height, currentCapture.fps)
-            videoTrack = factory?.createVideoTrack("camera", videoSource)
         } catch (e: Exception) { onError("Ошибка запуска камеры: ${e.message}") }
     }
 
@@ -159,13 +167,10 @@ class RtcEngine(
             }
             override fun onRenegotiationNeeded() {}
             override fun onAddTrack(receiver: RtpReceiver, streams: Array<MediaStream>) {
-                if (myGeneration == peerGeneration && !closing.get() && role == Role.PARENT && receiver.track() is VideoTrack) {
-                    attachVideoTrack(receiver.track() as VideoTrack)
-                }
+                if (myGeneration == peerGeneration && !closing.get()) attachIncomingTrack(receiver.track())
             }
             override fun onTrack(transceiver: RtpTransceiver) {
-                if (myGeneration == peerGeneration && !closing.get() && role == Role.PARENT && transceiver.receiver.track() is VideoTrack)
-                    attachVideoTrack(transceiver.receiver.track() as VideoTrack)
+                if (myGeneration == peerGeneration && !closing.get()) attachIncomingTrack(transceiver.receiver.track())
             }
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
                 if (myGeneration != peerGeneration || closing.get()) return
@@ -184,6 +189,9 @@ class RtcEngine(
         if (role == Role.BABY) videoTrack?.let {
             videoSender = connection.addTrack(it, listOf("local"))
             updateEncoderBitrate()
+            // Let WebRTC's congestion controller adapt below this ceiling on weak Wi-Fi.
+            try { connection.setBitrate(null, minOf(qualityProfile.maxBitrateBps / 2, 3_000_000), qualityProfile.maxBitrateBps) }
+            catch (e: Exception) { Log.w("RtcEngine", "Initial video bitrate unavailable", e) }
         }
         if (role == Role.PARENT) {
             connection.addTransceiver(
@@ -193,6 +201,63 @@ class RtcEngine(
             installChannel(connection.createDataChannel("controls", DataChannel.Init()))
         }
         if (initiator) createOffer()
+    }
+
+    private fun attachIncomingTrack(track: MediaStreamTrack?) {
+        when (track) {
+            is VideoTrack -> if (role == Role.PARENT) attachVideoTrack(track)
+            is AudioTrack -> {
+                inboundAudioTrack = track
+                applyPlaybackVolume()
+            }
+        }
+    }
+
+    private fun applyPlaybackVolume() {
+        try { inboundAudioTrack?.setVolume(if (playbackEnabled) playbackVolume / 100.0 else 0.0) }
+        catch (e: Exception) { Log.w("RtcEngine", "Incoming audio volume unavailable", e) }
+    }
+
+    fun setPlayback(enabled: Boolean, volume: Int) {
+        playbackEnabled = enabled
+        playbackVolume = volume.coerceIn(0, 100)
+        applyPlaybackVolume()
+    }
+
+    fun setCameraMicrophone(enabled: Boolean) {
+        if (role != Role.BABY) return
+        cameraMicEnabled = enabled
+        audioTrack?.setEnabled(enabled)
+    }
+
+    /** Report actual received video bandwidth; ICE and encoder control remain adaptive. */
+    fun pollVideoStats(onResult: (String) -> Unit) {
+        if (role != Role.PARENT || closing.get()) return
+        val connection = peer ?: return
+        val generation = peerGeneration
+        try {
+            connection.getStats { report ->
+                if (closing.get() || generation != peerGeneration) return@getStats
+                val video = report.statsMap.values.firstOrNull { stat ->
+                    stat.type == "inbound-rtp" &&
+                        (stat.members["kind"] == "video" || stat.members["mediaType"] == "video")
+                }
+                if (video != null) {
+                    val bytes = (video.members["bytesReceived"] as? Number)?.toLong()
+                    val loss = (video.members["packetsLost"] as? Number)?.toLong()
+                    if (bytes != null) {
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (previousStatsTime > 0 && now > previousStatsTime && bytes >= previousBytes) {
+                            val mbps = (bytes - previousBytes) * 8.0 / (now - previousStatsTime) / 1000.0
+                            onResult(String.format(java.util.Locale.US, "%.2f Мбит/с", mbps) +
+                                (if (loss != null && loss > 0) " · потеряно пакетов: $loss" else ""))
+                        }
+                        previousBytes = bytes
+                        previousStatsTime = now
+                    }
+                }
+            }
+        } catch (e: Exception) { Log.w("RtcEngine", "Video transport stats unavailable", e) }
     }
 
     @Synchronized private fun attachVideoTrack(track: VideoTrack) {
@@ -309,7 +374,10 @@ class RtcEngine(
         try {
             val parameters = sender.parameters
             if (parameters.encodings.isEmpty()) return
-            parameters.encodings.forEach { it.maxBitrateBps = qualityProfile.maxBitrateBps }
+            parameters.encodings.forEach {
+                it.maxBitrateBps = qualityProfile.maxBitrateBps
+                it.maxFramerate = qualityProfile.fps
+            }
             sender.setParameters(parameters)
         } catch (e: Exception) {
             Log.w("RtcEngine", "Video bitrate cannot be changed", e)
@@ -326,6 +394,10 @@ class RtcEngine(
             onError("Камера не сменила режим: ${e.message}")
         }
         updateEncoderBitrate()
+        if (role == Role.BABY) {
+            try { peer?.setBitrate(null, minOf(value.maxBitrateBps / 2, 3_000_000), value.maxBitrateBps) }
+            catch (e: Exception) { Log.w("RtcEngine", "Video bitrate request rejected", e) }
+        }
         return currentCapture
     }
 
@@ -346,6 +418,9 @@ class RtcEngine(
         try { channel?.unregisterObserver() } catch (_: Exception) {}
         try { channel?.close() } catch (_: Exception) {}
         channel = null
+        inboundAudioTrack = null
+        previousBytes = -1L
+        previousStatsTime = 0L
         videoSender = null
         try { peer?.close() } catch (_: Exception) {}
         try { peer?.dispose() } catch (_: Exception) {}
@@ -357,6 +432,7 @@ class RtcEngine(
         try { capturer?.stopCapture() } catch (_: Exception) {}
         capturer?.dispose(); capturer = null
         texture?.dispose(); texture = null
+        MonitorBus.setCameraVideoTrack(null)
         videoTrack?.dispose(); videoTrack = null
         videoSource?.dispose(); videoSource = null
         audioTrack?.dispose(); audioTrack = null

@@ -5,7 +5,7 @@ import org.webrtc.EglBase
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
 
-/** In-process state used by the activity and the long-running local service. */
+/** Live state for the activity and the local foreground service. */
 enum class Role { BABY, PARENT }
 
 data class MonitorState(
@@ -20,10 +20,15 @@ data class MonitorState(
     val lastSoundAt: Long = 0,
     val nightMode: Boolean = false,
     val torchOn: Boolean = false,
-    val videoQuality: String = "HD",
+    val videoQuality: String = "FHD_30",
     val actualVideo: String = "",
+    val networkVideo: String = "",
     val musicSound: String = "OFF",
     val musicRemainingSeconds: Int = 0,
+    val musicVolume: Int = 20,
+    val cameraMicEnabled: Boolean = true,
+    val speakerEnabled: Boolean = true,
+    val playbackVolume: Int = 100,
     val talking: Boolean = false,
     val error: String = ""
 )
@@ -32,21 +37,35 @@ object MonitorBus {
     val state = MutableStateFlow(MonitorState())
     val eglBase: EglBase by lazy { EglBase.create() }
 
-    private var renderer: SurfaceViewRenderer? = null
-    private var videoTrack: VideoTrack? = null
+    private var remoteTrack: VideoTrack? = null
+    private var cameraTrack: VideoTrack? = null
+    private val remoteRenderers = LinkedHashSet<SurfaceViewRenderer>()
+    private val cameraRenderers = LinkedHashSet<SurfaceViewRenderer>()
 
     @Synchronized fun setVideoTrack(track: VideoTrack?) {
-        val sink = renderer
-        if (sink != null) videoTrack?.removeSink(sink)
-        videoTrack = track
-        if (sink != null) track?.addSink(sink)
+        if (remoteTrack === track) return
+        remoteRenderers.forEach { renderer -> remoteTrack?.removeSink(renderer) }
+        remoteTrack = track
+        remoteRenderers.forEach { renderer -> track?.addSink(renderer) }
     }
 
-    @Synchronized fun bindRenderer(view: SurfaceViewRenderer?) {
-        val old = renderer
-        if (old != null) videoTrack?.removeSink(old)
-        renderer = view
-        if (view != null) videoTrack?.addSink(view)
+    @Synchronized fun setCameraVideoTrack(track: VideoTrack?) {
+        if (cameraTrack === track) return
+        cameraRenderers.forEach { renderer -> cameraTrack?.removeSink(renderer) }
+        cameraTrack = track
+        cameraRenderers.forEach { renderer -> track?.addSink(renderer) }
+    }
+
+    @Synchronized fun attachRenderer(view: SurfaceViewRenderer, cameraPreview: Boolean) {
+        val renderers = if (cameraPreview) cameraRenderers else remoteRenderers
+        val track = if (cameraPreview) cameraTrack else remoteTrack
+        if (renderers.add(view)) track?.addSink(view)
+    }
+
+    @Synchronized fun detachRenderer(view: SurfaceViewRenderer, cameraPreview: Boolean) {
+        val renderers = if (cameraPreview) cameraRenderers else remoteRenderers
+        val track = if (cameraPreview) cameraTrack else remoteTrack
+        if (renderers.remove(view)) track?.removeSink(view)
     }
 
     fun mutate(transform: (MonitorState) -> MonitorState) {
