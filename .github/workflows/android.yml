@@ -8,10 +8,7 @@ on:
       - 'LICENSE'
       - 'licenses/**'
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'LICENSE'
-      - 'licenses/**'
+    branches: [main]
   workflow_dispatch:
 
 permissions:

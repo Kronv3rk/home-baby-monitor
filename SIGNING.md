@@ -35,3 +35,22 @@ Debug-сборки и подписанные release-сборки имеют р�
 - Подписан тем же сертификатом, что и 0.4.2.
 - SHA-256: `e8d33412871ac15a11e24a46878269c936e9fb64473d39146e825cc0af32ee9b`.
 - Выпуск подписанных APK на GitHub Releases не автоматизирован: в CI нет приватного ключа. Не подменять подписанный APK неподписанным CI-артефактом.
+
+## Защита репозитория перед сохранением ключа в GitHub
+
+Сначала откройте [Rulesets](https://github.com/Kronv3rk/home-baby-monitor/settings/rules) и создайте активный **branch ruleset** для `main`. Включите:
+
+- Require a pull request before merging (0 approvals при одном сопровождающем; 1 или больше при наличии независимого ревьюера).
+- Require status checks to pass: **Tests, lint, release package**.
+- Block force pushes и Restrict deletions; не добавляйте администраторов в список обхода правил без необходимости.
+
+Workflow `Android CI` запускается на **каждом PR в main**, даже если изменена только документация. Иначе обязательная проверка зависла бы в состоянии Pending.
+
+Далее откройте [Environments](https://github.com/Kronv3rk/home-baby-monitor/settings/environments), создайте окружение **release-signing** и в разделе **Deployment branches and tags** разрешите только выбранную ветку `main`. В **Environment secrets**, а не в Repository secrets, добавьте существующие:
+
+- `HBM_RELEASE_KEYSTORE_BASE64` — содержимое файла Base64 ключа.
+- `HBM_RELEASE_KEYSTORE_PASSWORD` — пароль PKCS12.
+
+Если ранее секреты добавлены на уровне Repository, перенесите их в Environment secrets и удалите repository-копии. Текущий release workflow использует окружение `release-signing` и не запускает подпись, пока на `main` не появятся активные правила для pull requests и обязательного CI.
+
+**Предупреждение:** правило для `main` и проверка в workflow не защищают от владельца аккаунта и участников, которым явно разрешён bypass. Храните ключ офлайн, используйте двухфакторную аутентификацию GitHub и по возможности проверяйте изменения workflow отдельным человеком.

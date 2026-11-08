@@ -1,0 +1,7 @@
+# Changes affecting release signing, CI, app logic and repository security
+* @Kronv3rk
+/.github/ @Kronv3rk
+/SIGNING.md @Kronv3rk
+/SECURITY.md @Kronv3rk
+/SECURITY_AUDIT.md @Kronv3rk
+/app/ @Kronv3rk

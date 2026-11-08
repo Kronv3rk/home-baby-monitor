@@ -6,8 +6,34 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: publish-signed-release
+  cancel-in-progress: false
+
 jobs:
+  verify-protection:
+    name: Verify main branch protection
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Require PRs and passing tests on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          active_rules="$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main")"
+          if ! printf '%s' "$active_rules" | jq -e '
+            any(.[]; .type == "pull_request") and
+            any(.[]; .type == "required_status_checks")
+          ' >/dev/null; then
+            echo "::error::Protect main: require pull requests and Android CI before signing"
+            exit 1
+          fi
   publish:
+    needs: verify-protection
+    if: github.ref == 'refs/heads/main'
+    environment: release-signing
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
