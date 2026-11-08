@@ -5,6 +5,7 @@ import android.app.ApplicationExitInfo
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
 import com.homebabymonitor.core.CrashReportFormatter
@@ -33,8 +34,8 @@ internal object CrashDiagnostics {
 
     fun available(context: Context): Boolean = latestCrash(context) != null
 
-    fun share(context: Context) {
-        val crash = latestCrash(context) ?: return
+    fun prepareReport(context: Context): Uri? {
+        val crash = latestCrash(context) ?: return null
         val folder = File(context.cacheDir, "diagnostics")
         check(folder.isDirectory || folder.mkdirs()) { "Не удалось создать каталог диагностики" }
         val archive = File(folder, "HomeBabyMonitor-crash.zip")
@@ -68,7 +69,10 @@ internal object CrashDiagnostics {
             }
         }
 
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.diagnostics", archive)
+        return FileProvider.getUriForFile(context, "${context.packageName}.diagnostics", archive)
+    }
+
+    fun shareReport(context: Context, uri: Uri) {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/zip"
             putExtra(Intent.EXTRA_STREAM, uri)

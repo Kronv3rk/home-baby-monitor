@@ -15,6 +15,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.homebabymonitor.MonitorBus
 import com.homebabymonitor.MonitorService
 import com.homebabymonitor.Role
@@ -146,10 +150,17 @@ class MainActivity : ComponentActivity() {
                 MonitorScreen(state,
                     crashAvailable = canShareCrashReport,
                     shareCrash = {
-                        runCatching { CrashDiagnostics.share(this@MainActivity) }
-                            .onFailure { error ->
+                        lifecycleScope.launch {
+                            try {
+                                val uri = withContext(Dispatchers.IO) {
+                                    CrashDiagnostics.prepareReport(this@MainActivity)
+                                }
+                                if (uri != null) CrashDiagnostics.shareReport(this@MainActivity, uri)
+                                else MonitorBus.mutate { it.copy(error = "Android не сохранил сведения о сбое") }
+                            } catch (error: Exception) {
                                 MonitorBus.mutate { it.copy(error = "Не удалось подготовить отчёт: ${error.message}") }
                             }
+                        }
                     },
                     startBaby = { startSession(Role.BABY, "", "") },
                     startParent = { ip, pin -> startSession(Role.PARENT, ip, pin) },
