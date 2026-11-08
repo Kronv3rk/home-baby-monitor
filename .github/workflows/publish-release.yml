@@ -1,0 +1,72 @@
+name: Publish signed APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --install 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Verify protocol and build Android release
+        run: |
+          bash tools/verify-jvm.sh
+          gradle --no-daemon :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
+      - name: Verify permanent signing key and sign
+        env:
+          HBM_RELEASE_KEYSTORE_BASE64: ${{ secrets.HBM_RELEASE_KEYSTORE_BASE64 }}
+          HBM_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.HBM_RELEASE_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$HBM_RELEASE_KEYSTORE_BASE64" || { echo "::error::Missing keystore secret"; exit 1; }
+          test -n "$HBM_RELEASE_KEYSTORE_PASSWORD" || { echo "::error::Missing signing password"; exit 1; }
+          umask 077
+          KEYFILE="$RUNNER_TEMP/release.p12"
+          printf '%s' "$HBM_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYFILE"
+          VERSION="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts | head -n1)"
+          test -n "$VERSION"
+          mkdir -p distribution
+          APK="distribution/HomeBabyMonitor-v${VERSION}-release.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -P 16 -f 4 \
+            app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
+            --ks "$KEYFILE" --ks-type PKCS12 --ks-key-alias home-baby-monitor \
+            --ks-pass env:HBM_RELEASE_KEYSTORE_PASSWORD \
+            --out "$APK" "$RUNNER_TEMP/aligned.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/signature.txt"
+          EXPECTED="f0fcd91e6307440ec04200480fb3f48491627e4fd3f70fa93069037274c43a9c"
+          ACTUAL="$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' "$RUNNER_TEMP/signature.txt" | tr 'A-F' 'a-f')"
+          test "$ACTUAL" = "$EXPECTED" || { echo "::error::Unexpected signing certificate"; exit 1; }
+          sha256sum "$APK" > distribution/SHA256SUMS.txt
+          echo "TAG=v$VERSION" >> "$GITHUB_ENV"
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          rm -f "$KEYFILE"
+      - name: Publish signed release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG exists; will not overwrite signed assets"
+            exit 1
+          fi
+          gh release create "$TAG" "$APK" distribution/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --title "HomeBabyMonitor $TAG" \
+            --prerelease --notes "Signed test APK. Same update certificate as 0.4.2. Not a substitute for adult supervision."
