@@ -1,0 +1,5 @@
+HomeBabyMonitor 0.4.7 signed release request
+
+Merge this request after Android CI for PR #3 passes. The publish-release workflow
+must verify branch protection, package signatures and the WebRTC JNI bootstrap.
+Use the same certificate as releases 0.4.2–0.4.6. Never print signing secrets.

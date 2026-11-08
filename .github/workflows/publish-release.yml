@@ -2,6 +2,11 @@ name: Publish signed APK
 
 on:
   workflow_dispatch:
+  # One-time release request: publish signed APK after merging the verified fix.
+  push:
+    branches: [main]
+    paths:
+      - '.github/release-requests/v0.4.7.txt'
 
 permissions:
   contents: write
@@ -55,6 +60,8 @@ jobs:
         run: |
           bash tools/verify-jvm.sh
           gradle --no-daemon :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
+          bash tools/test-jni-init.sh
+          bash tools/check-webrtc-r8.sh app/build/outputs/apk/release/app-release-unsigned.apk
       - name: Verify permanent signing key and sign
         env:
           HBM_RELEASE_KEYSTORE_BASE64: ${{ secrets.HBM_RELEASE_KEYSTORE_BASE64 }}
@@ -90,6 +97,7 @@ jobs:
             --ks-pass env:HBM_RELEASE_KEYSTORE_PASSWORD \
             --out "$APK" app/build/outputs/apk/release/app-release-unsigned.apk
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/signature.txt"
+          bash tools/check-webrtc-r8.sh "$APK"
           EXPECTED="f0fcd91e6307440ec04200480fb3f48491627e4fd3f70fa93069037274c43a9c"
           ACTUAL="$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' "$RUNNER_TEMP/signature.txt" | tr 'A-F' 'a-f')"
           test "$ACTUAL" = "$EXPECTED" || { echo "::error::Unexpected signing certificate"; exit 1; }

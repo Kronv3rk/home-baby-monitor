@@ -9,6 +9,7 @@
 | ZXing Android Embedded (`com.journeyapps:zxing-android-embedded`) | 4.3.0 | Apache-2.0 — [JourneyApps](https://github.com/journeyapps/zxing-android-embedded) |
 | ZXing Core | Транзитивная зависимость | Apache-2.0 — [ZXing](https://github.com/zxing/zxing) |
 | WebRTC Android SDK (`io.github.webrtc-sdk:android`) | 150.7871.01 | BSD-3-Clause для WebRTC, см. [текст лицензии](licenses/WEBRTC-BSD-3-CLAUSE.txt), [Maven Central](https://central.sonatype.com/artifact/io.github.webrtc-sdk/android) и [проект](https://github.com/webrtc-sdk/android) |
+| Chromium JNI Zero bootstrap (`org.jni_zero.JniInit`) | Код моста для WebRTC M150 | BSD-3-Clause — [Chromium Authors (2024)](https://chromium.googlesource.com/chromium/src/+/e4259e1fc57fdbb88111021a57dede285f4a15e5/third_party/jni_zero/java/src/org/jni_zero/JniInit.java) |
 | AndroidX Activity Compose | 1.10.1 | Apache-2.0 — [AndroidX](https://developer.android.com/jetpack/androidx) |
 | Jetpack Compose BOM и Compose UI / Material3 / Material Icons Extended | BOM 2025.04.01 | Apache-2.0 — [AndroidX](https://developer.android.com/jetpack/compose) |
 | AndroidX Lifecycle Runtime Compose | 2.9.0 | Apache-2.0 — [AndroidX](https://developer.android.com/jetpack/androidx) |
