@@ -1,0 +1,4 @@
+HomeBabyMonitor 0.4.8 signed release request.
+
+Run only after checks in PR and preserve the existing signing certificate.
+Verify the native JNI bridge, full Android test suite and release APK before publishing.
