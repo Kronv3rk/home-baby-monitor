@@ -8,6 +8,15 @@ import java.net.Socket
 import kotlin.concurrent.thread
 
 class CoreTest {
+    @Test fun nativeCrashCanBeIdentifiedInSharedReport() {
+        assertEquals("Сбой нативного компонента", CrashReportFormatter.label(5))
+        assertEquals("Необработанная ошибка Android", CrashReportFormatter.label(4))
+        assertEquals("Приложение не отвечало", CrashReportFormatter.label(6))
+        val result = CrashReportFormatter.summary(5, 11, 1710000000000, "0.4.5")
+        assertTrue(result.contains("сигнал: 11"))
+        assertTrue(result.contains("0.4.5"))
+    }
+
     @Test fun localSocketExchangesSignalling() {
         val code = PairingCode.generate()
         ServerSocket(0).use { server ->

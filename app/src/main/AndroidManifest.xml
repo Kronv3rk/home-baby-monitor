@@ -32,5 +32,11 @@
         <service android:name=".MonitorService" android:exported="false"
             android:foregroundServiceType="camera|microphone|mediaPlayback"
             android:stopWithTask="false" />
+        <provider android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.diagnostics"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/diagnostic_paths" />
+        </provider>
     </application>
 </manifest>

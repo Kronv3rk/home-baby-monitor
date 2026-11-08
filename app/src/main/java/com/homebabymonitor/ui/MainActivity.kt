@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -141,7 +142,15 @@ class MainActivity : ComponentActivity() {
                 secondary = muted, onSurface = Color.White,
                 error = coral
             )) {
+                val canShareCrashReport = remember { CrashDiagnostics.available(this@MainActivity) }
                 MonitorScreen(state,
+                    crashAvailable = canShareCrashReport,
+                    shareCrash = {
+                        runCatching { CrashDiagnostics.share(this@MainActivity) }
+                            .onFailure { error ->
+                                MonitorBus.mutate { it.copy(error = "Не удалось подготовить отчёт: ${error.message}") }
+                            }
+                    },
                     startBaby = { startSession(Role.BABY, "", "") },
                     startParent = { ip, pin -> startSession(Role.PARENT, ip, pin) },
                     scanQr = { scanQr() },
