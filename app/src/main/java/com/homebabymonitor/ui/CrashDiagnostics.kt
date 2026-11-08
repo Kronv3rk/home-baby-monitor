@@ -35,6 +35,7 @@ internal object CrashDiagnostics {
     fun available(context: Context): Boolean = latestCrash(context) != null
 
     fun prepareReport(context: Context): Uri? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         val crash = latestCrash(context) ?: return null
         val folder = File(context.cacheDir, "diagnostics")
         check(folder.isDirectory || folder.mkdirs()) { "Не удалось создать каталог диагностики" }
