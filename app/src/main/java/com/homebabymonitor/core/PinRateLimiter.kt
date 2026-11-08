@@ -7,6 +7,7 @@ class PinRateLimiter(private val maxFailures: Int = 5, private val windowMillis:
         while (failedAt.isNotEmpty() && nowMillis - failedAt.first() >= windowMillis) failedAt.removeFirst()
         return failedAt.size < maxFailures
     }
+    @Synchronized fun succeeded() { failedAt.clear() }
     @Synchronized fun failed(nowMillis: Long) {
         mayTry(nowMillis)
         failedAt.add(nowMillis)

@@ -87,6 +87,16 @@ class CoreTest {
         for (ip in listOf("8.8.8.8", "172.32.0.1", "example.com", "127.0.0.1", "192.168.001.2")) assertFalse(LocalAddress.isPrivateIpv4(ip))
     }
 
+    @Test fun successfulAuthenticationClearsPriorFailures() {
+        val limiter = PinRateLimiter(maxFailures = 3, windowMillis = 60000)
+        limiter.failed(100L)
+        limiter.failed(200L)
+        limiter.succeeded()
+        assertTrue(limiter.mayTry(300L))
+        limiter.failed(301L)
+        assertTrue(limiter.mayTry(302L))
+    }
+
     @Test fun pinBruteForceGetsTemporaryBlock() {
         val guard = PinRateLimiter(maxFailures = 5, windowMillis = 60000)
         for (attempt in 0..4) { assertTrue(guard.mayTry(attempt.toLong())); guard.failed(attempt.toLong()) }

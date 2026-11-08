@@ -9,6 +9,12 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
+import java.util.LinkedHashMap
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class BabySignalServer(
@@ -20,9 +26,26 @@ class BabySignalServer(
     private val onError: (String) -> Unit
 ) {
     private val running = AtomicBoolean(false)
-    private val pinLimiter = PinRateLimiter()
+    private val sessionLock = Any()
+    private val openSockets = ConcurrentHashMap.newKeySet<Socket>()
+    private val workers = ThreadPoolExecutor(
+        4, 4, 0L, TimeUnit.SECONDS, ArrayBlockingQueue(8),
+        { task -> Thread(task, "baby-signal-client").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy()
+    )
+    private val rateLimiters = object : LinkedHashMap<String, PinRateLimiter>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PinRateLimiter>?): Boolean =
+            size > 128
+    }
     @Volatile private var server: ServerSocket? = null
     @Volatile private var activePipe: SignalPipe? = null
+
+    private fun limiterFor(socket: Socket): PinRateLimiter {
+        val address = socket.inetAddress.hostAddress.orEmpty()
+        return synchronized(rateLimiters) {
+            rateLimiters.getOrPut(address) { PinRateLimiter() }
+        }
+    }
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
@@ -44,7 +67,16 @@ class BabySignalServer(
                     } catch (_: SocketException) {
                         break
                     }
-                    handleClient(client)
+                    openSockets.add(client)
+                    try {
+                        workers.execute {
+                            try { handleClient(client) }
+                            finally { openSockets.remove(client) }
+                        }
+                    } catch (_: RejectedExecutionException) {
+                        openSockets.remove(client)
+                        client.close()
+                    }
                 }
             }
         } catch (error: Exception) {
@@ -55,20 +87,19 @@ class BabySignalServer(
     }
 
     private fun handleClient(socket: Socket) {
-        socket.tcpNoDelay = true
-        socket.soTimeout = 5_000
-        val pipe = try {
-            SignalPipe(socket)
-        } catch (_: Exception) {
-            socket.close()
-            return
-        }
+        val limiter = limiterFor(socket)
+        var pipe: SignalPipe? = null
         var authorized = false
         try {
-            if (!pinLimiter.mayTry(SystemClock.elapsedRealtime())) {
+            socket.tcpNoDelay = true
+            socket.soTimeout = 5_000
+            pipe = SignalPipe(socket)
+
+            if (!limiter.mayTry(SystemClock.elapsedRealtime())) {
                 pipe.send(WireMessage.Reject)
                 return
             }
+
             val clientNonce = (pipe.read() as? WireMessage.Hello)?.value
                 ?: throw IOException("Client nonce required")
             val serverNonce = PairingCode.newChallenge()
@@ -76,14 +107,19 @@ class BabySignalServer(
             pipe.enableSecure(pin, "$clientNonce.$serverNonce", isServer = true)
 
             if (pipe.read() != WireMessage.Proof) {
-                pinLimiter.failed(SystemClock.elapsedRealtime())
+                limiter.failed(SystemClock.elapsedRealtime())
                 return
             }
             if (!pipe.send(WireMessage.Accept)) return
 
             authorized = true
-            activePipe?.close()
-            activePipe = pipe
+            limiter.succeeded()
+            synchronized(sessionLock) {
+                if (!running.get()) return
+                val previous = activePipe
+                activePipe = pipe
+                previous?.close()
+            }
             socket.soTimeout = 14_000
             onConnected(pipe, socket.inetAddress.hostAddress.orEmpty())
             while (running.get()) {
@@ -91,28 +127,29 @@ class BabySignalServer(
                 if (message != WireMessage.Proof &&
                     message !is WireMessage.Challenge &&
                     message !is WireMessage.Hello
-                ) {
-                    onMessage(message)
-                }
+                ) onMessage(message)
             }
         } catch (_: Exception) {
-            if (!authorized) pinLimiter.failed(SystemClock.elapsedRealtime())
+            if (!authorized && running.get()) limiter.failed(SystemClock.elapsedRealtime())
         } finally {
-            pipe.close()
-            if (authorized && activePipe === pipe) {
-                activePipe = null
-                onDisconnected()
+            pipe?.close()
+            if (authorized) {
+                val wasActive = synchronized(sessionLock) {
+                    if (activePipe === pipe) {
+                        activePipe = null
+                        true
+                    } else false
+                }
+                if (wasActive) onDisconnected()
             }
         }
     }
 
     fun stop() {
         running.set(false)
-        activePipe?.close()
-        try {
-            server?.close()
-        } catch (_: Exception) {
-            // Closing the listener is best-effort during shutdown.
-        }
+        server?.let { runCatching { it.close() } }
+        synchronized(sessionLock) { activePipe?.close(); activePipe = null }
+        openSockets.forEach { runCatching { it.close() } }
+        workers.shutdownNow()
     }
 }
