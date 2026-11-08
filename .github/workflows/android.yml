@@ -42,15 +42,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p distribution
-          cp app/build/outputs/apk/release/app-release-unsigned.apk distribution/HomeBabyMonitor-v0.4.2-unsigned.apk
-          sha256sum distribution/HomeBabyMonitor-v0.4.2-unsigned.apk > distribution/SHA256SUMS.txt
+          cp app/build/outputs/apk/release/app-release-unsigned.apk distribution/HomeBabyMonitor-v0.4.3-unsigned.apk
+          sha256sum distribution/HomeBabyMonitor-v0.4.3-unsigned.apk > distribution/SHA256SUMS.txt
           # Only used to sign the release offline; no private signing material is present in CI.
           cp "$ANDROID_HOME/build-tools/36.0.0/lib/apksigner.jar" distribution/apksigner.jar
           cp "$ANDROID_HOME/build-tools/36.0.0/zipalign" distribution/zipalign
           chmod +x distribution/zipalign
       - uses: actions/upload-artifact@v4
         with:
-          name: HomeBabyMonitor-v0.4.2-unsigned-release
+          name: HomeBabyMonitor-v0.4.3-unsigned-release
           path: distribution/*
           if-no-files-found: error
           retention-days: 14

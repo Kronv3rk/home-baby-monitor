@@ -68,6 +68,9 @@ class MonitorService : Service() {
     private val watchdog = SessionWatchdog()
     private var alarmedForOutage = false
     private val running = AtomicBoolean(false)
+    private val wifiHandler = Handler(Looper.getMainLooper())
+    private var wifiRetry: Runnable? = null
+    private var mediaStarted = false
     private val iceConnected = AtomicBoolean(false)
     private val firstVideoFrameReceived = AtomicBoolean(false)
     private var wakeLock: PowerManager.WakeLock? = null
@@ -150,6 +153,7 @@ class MonitorService : Service() {
         firstVideoFrameReceived.set(false)
         alarmedForOutage = false
         qualityPending = true
+        mediaStarted = false
         watchdog.started(SystemClock.elapsedRealtime())
         MonitorBus.state.value = MonitorState(
             role = newRole,
@@ -158,11 +162,44 @@ class MonitorService : Service() {
             remoteIp = ip,
             status = if (newRole == Role.BABY) "Камера запускается…" else "Поиск камеры…"
         )
-        if (!bindToWifi()) {
-            MonitorBus.mutate { it.copy(error = "Подключите оба телефона к домашней сети Wi-Fi") }
-            stopSelf()
-            return
+        awaitLocalWifi(newRole, ip, pin)
+    }
+
+    private fun awaitLocalWifi(newRole: Role, ip: String, pin: String) {
+        val attempt = object : Runnable {
+            override fun run() {
+                if (!running.get() || mediaStarted) return
+                val route = LocalIp.route(this@MonitorService)
+                if (route == null) {
+                    MonitorBus.mutate {
+                        it.copy(localIp = "—", status = "Ожидание Wi-Fi",
+                            error = "Подключите этот телефон к домашнему Wi-Fi. Камера запустится автоматически.")
+                    }
+                    wifiHandler.postDelayed(this, 2500)
+                    return
+                }
+                mediaStarted = true
+                val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                if (route.network != null) {
+                    try {
+                        if (!manager.bindProcessToNetwork(route.network))
+                            Log.w("MonitorService", "Wi-Fi present but process binding was rejected")
+                    } catch (e: Exception) {
+                        Log.w("MonitorService", "Wi-Fi process binding unavailable", e)
+                    }
+                }
+                MonitorBus.mutate {
+                    it.copy(localIp = route.address, error = "",
+                        status = if (newRole == Role.BABY) "Запускаем камеру" else "Подключаемся к камере")
+                }
+                startSession(newRole, ip, pin, route.address)
+            }
         }
+        wifiRetry = attempt
+        attempt.run()
+    }
+
+    private fun startSession(newRole: Role, ip: String, pin: String, wifiIp: String) {
         acquirePowerLocks()
         configureAudioOutput()
         try {
@@ -184,7 +221,7 @@ class MonitorService : Service() {
         }
         if (newRole == Role.BABY) {
             val code = MonitorBus.state.value.pairingPin
-            val localIp = LocalIp.current(this)
+            val localIp = wifiIp
             if (!LocalAddress.isPrivateIpv4(localIp)) {
                 MonitorBus.mutate { it.copy(error = "Не удалось определить локальный IPv4-адрес Wi-Fi") }
                 stopSelf(); return
@@ -429,19 +466,6 @@ class MonitorService : Service() {
         } catch (_: Exception) {}
     }
 
-    private fun bindToWifi(): Boolean {
-        return try {
-            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val wifi = cm.allNetworks.firstOrNull { network ->
-                cm.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-            } ?: return false
-            cm.bindProcessToNetwork(wifi)
-        } catch (e: Exception) {
-            Log.w("MonitorService", "Cannot bind process to local Wi-Fi", e)
-            false
-        }
-    }
-
     private fun configureAudioOutput() {
         try {
             val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -479,6 +503,9 @@ class MonitorService : Service() {
 
     override fun onDestroy() {
         running.set(false)
+        wifiRetry?.let(wifiHandler::removeCallbacks)
+        wifiRetry = null
+        mediaStarted = false
         sleepPlayer.stop()
         ticker?.shutdownNow(); ticker = null
         connector?.stop(); connector = null

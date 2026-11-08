@@ -88,6 +88,22 @@ class CoreTest {
         assertNull(watchdog.problem(56000))
     }
 
+    @Test fun offlineWifiWorksEvenWhenMobileInternetIsDefault() {
+        val candidates = listOf(
+            WifiCandidate(false, true, listOf("10.123.0.8")),
+            WifiCandidate(true, false, listOf("192.168.22.3"))
+        )
+        assertEquals("192.168.22.3", WifiEndpointSelector.choose(candidates))
+        assertNull(WifiEndpointSelector.choose(listOf(WifiCandidate(false, true, listOf("10.1.2.3")))))
+    }
+
+    @Test fun wifiSelectionIgnoresLinkLocalAndPublicAddresses() {
+        assertEquals("192.168.7.12", WifiEndpointSelector.choose(
+            listOf(WifiCandidate(true, false, listOf("169.254.1.4", "192.168.7.12")))
+        ))
+        assertNull(WifiEndpointSelector.choose(listOf(WifiCandidate(true, true, listOf("8.8.8.8")))))
+    }
+
     @Test fun qrPairingAcceptsOnlyPrivateAddress() {
         val secret = PairingCode.generate()
         val link = PairingLink.create("192.168.1.25", secret)

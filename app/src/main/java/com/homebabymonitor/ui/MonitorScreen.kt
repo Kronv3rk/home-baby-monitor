@@ -140,6 +140,8 @@ private fun BabyCameraScreen(state: MonitorState, stop: () -> Unit) {
                 PairingQr(qrContent)
             }
             Text("Откройте «Сканировать QR-код» на втором телефоне.", color = muted, fontSize = 13.sp)
+        } else {
+            Text("QR-код появится после подключения к Wi-Fi.", color = muted, fontSize = 13.sp)
         }
         HorizontalDivider(color = faint)
         Text("Код для ручного подключения", color = muted, fontSize = 12.sp)
