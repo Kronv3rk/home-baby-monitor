@@ -216,7 +216,12 @@ class MonitorService : Service() {
                 },
                 onError = { error -> MonitorBus.mutate { it.copy(error = error) } }
             ).also { it.start() }
+        } catch (e: LinkageError) {
+            Log.e("MonitorService", "WebRTC native library initialization failed", e)
+            MonitorBus.mutate { it.copy(error = "Не удалось загрузить видеомодуль на этом телефоне.") }
+            stopSelf(); return
         } catch (e: Exception) {
+            Log.e("MonitorService", "Camera or audio startup failed", e)
             MonitorBus.mutate { it.copy(error = "Не удалось запустить видео или звук: ${e.message}") }
             stopSelf(); return
         }

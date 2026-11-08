@@ -8,6 +8,26 @@ import java.net.Socket
 import kotlin.concurrent.thread
 
 class CoreTest {
+    @Test fun failedNativeInitializationMayBeRetried() {
+        val gate = InitializationGate()
+        var attempts = 0
+        assertThrows(IllegalStateException::class.java) {
+            gate.ensure { attempts++; throw IllegalStateException("native library unavailable") }
+        }
+        gate.ensure { attempts++ }
+        gate.ensure { attempts++ }
+        assertEquals(2, attempts)
+    }
+
+    @Test fun nativeCrashCanBeIdentifiedInSharedReport() {
+        assertEquals("Сбой нативного компонента", CrashReportFormatter.label(5))
+        assertEquals("Необработанная ошибка Android", CrashReportFormatter.label(4))
+        assertEquals("Приложение не отвечало", CrashReportFormatter.label(6))
+        val result = CrashReportFormatter.summary(5, 11, 1710000000000, "0.4.5")
+        assertTrue(result.contains("сигнал: 11"))
+        assertTrue(result.contains("0.4.5"))
+    }
+
     @Test fun localSocketExchangesSignalling() {
         val code = PairingCode.generate()
         ServerSocket(0).use { server ->

@@ -11,9 +11,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.homebabymonitor.MonitorBus
 import com.homebabymonitor.MonitorService
 import com.homebabymonitor.Role
@@ -87,7 +92,13 @@ class MainActivity : ComponentActivity() {
                 putExtra(MonitorService.EXTRA_IP, ip)
                 putExtra(MonitorService.EXTRA_PIN, pin)
             }
-            ContextCompat.startForegroundService(this, intent)
+            try {
+                ContextCompat.startForegroundService(this, intent)
+            } catch (error: IllegalStateException) {
+                MonitorBus.mutate { it.copy(error = "Android запретил запуск камеры в фоне. Откройте приложение и повторите попытку.") }
+            } catch (error: SecurityException) {
+                MonitorBus.mutate { it.copy(error = "Android не разрешил запуск камеры или микрофона. Проверьте разрешения.") }
+            }
         }
         val missing = request.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
         pendingStart = action
@@ -119,10 +130,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sendCommand(action: String, value: Boolean? = null) {
-        startService(Intent(this, MonitorService::class.java).apply {
-            this.action = action
-            if (value != null) putExtra(MonitorService.EXTRA_VALUE, value)
-        })
+        try {
+            startService(Intent(this, MonitorService::class.java).apply {
+                this.action = action
+                if (value != null) putExtra(MonitorService.EXTRA_VALUE, value)
+            })
+        } catch (error: IllegalStateException) {
+            MonitorBus.mutate { it.copy(error = "Android ограничил фоновую работу приложения.") }
+        } catch (error: SecurityException) {
+            MonitorBus.mutate { it.copy(error = "Недостаточно разрешений для управления камерой.") }
+        }
     }
 
     override fun onStop() {
@@ -141,7 +158,22 @@ class MainActivity : ComponentActivity() {
                 secondary = muted, onSurface = Color.White,
                 error = coral
             )) {
+                val canShareCrashReport = remember { CrashDiagnostics.available(this@MainActivity) }
                 MonitorScreen(state,
+                    crashAvailable = canShareCrashReport,
+                    shareCrash = {
+                        lifecycleScope.launch {
+                            try {
+                                val uri = withContext(Dispatchers.IO) {
+                                    CrashDiagnostics.prepareReport(this@MainActivity)
+                                }
+                                if (uri != null) CrashDiagnostics.shareReport(this@MainActivity, uri)
+                                else MonitorBus.mutate { it.copy(error = "Android не сохранил сведения о сбое") }
+                            } catch (error: Exception) {
+                                MonitorBus.mutate { it.copy(error = "Не удалось подготовить отчёт: ${error.message}") }
+                            }
+                        }
+                    },
                     startBaby = { startSession(Role.BABY, "", "") },
                     startParent = { ip, pin -> startSession(Role.PARENT, ip, pin) },
                     scanQr = { scanQr() },

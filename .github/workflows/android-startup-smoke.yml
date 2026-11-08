@@ -1,0 +1,58 @@
+name: Android device startup regression
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Launch HomeBabyMonitor on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -euo pipefail
+            gradle --no-daemon :app:assembleDebug
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb shell pm grant com.homebabymonitor android.permission.CAMERA
+            adb shell pm grant com.homebabymonitor android.permission.RECORD_AUDIO
+            adb shell pm grant com.homebabymonitor android.permission.POST_NOTIFICATIONS
+            adb shell pm grant com.homebabymonitor android.permission.NEARBY_WIFI_DEVICES
+            adb logcat -c
+            adb shell am start -W -n com.homebabymonitor/.ui.MainActivity
+            sleep 6
+            adb shell pidof com.homebabymonitor
+            adb shell am start-foreground-service -n com.homebabymonitor/.MonitorService -a com.homebabymonitor.START_BABY
+            sleep 8
+            adb shell pidof com.homebabymonitor
+            if adb logcat -d -b crash | grep -E 'FATAL EXCEPTION|Fatal signal|SIGSEGV|SIGABRT'; then
+              adb logcat -d -b crash | tail -n 180
+              exit 1
+            fi
+            adb shell am startservice -n com.homebabymonitor/.MonitorService -a com.homebabymonitor.STOP || true
+            sleep 2
+            adb shell am start -W -n com.homebabymonitor/.ui.MainActivity
+            sleep 3
+            adb shell pidof com.homebabymonitor
+      - name: Dump crash logs when emulator startup fails
+        if: failure()
+        run: |
+          adb logcat -d -b crash | tail -n 200 || true
+          adb logcat -d -t 400 | grep -E 'HomeBabyMonitor|homebabymonitor|AndroidRuntime|libjingle' | tail -n 160 || true

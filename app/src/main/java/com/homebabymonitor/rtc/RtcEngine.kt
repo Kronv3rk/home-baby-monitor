@@ -8,6 +8,7 @@ import com.homebabymonitor.Role
 import com.homebabymonitor.core.AudioTrigger
 import com.homebabymonitor.core.VideoQuality
 import com.homebabymonitor.core.CaptureOption
+import com.homebabymonitor.core.InitializationGate
 import com.homebabymonitor.core.WireMessage
 import org.webrtc.*
 import org.webrtc.audio.JavaAudioDeviceModule
@@ -73,9 +74,9 @@ class RtcEngine(
     @Volatile private var peerGeneration = 0L
 
     companion object {
-        private val initialized = AtomicBoolean(false)
-        @Synchronized private fun initialize(context: Context) {
-            if (initialized.compareAndSet(false, true)) {
+        private val initialization = InitializationGate()
+        private fun initialize(context: Context) {
+            initialization.ensure {
                 PeerConnectionFactory.initialize(
                     PeerConnectionFactory.InitializationOptions.builder(context.applicationContext).createInitializationOptions()
                 )
@@ -97,13 +98,15 @@ class RtcEngine(
                 }
             }
             .createAudioDeviceModule()
-        factory = PeerConnectionFactory.builder()
-            .setAudioDeviceModule(module)
-            .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl.eglBaseContext, true, true))
-            .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl.eglBaseContext))
-            .createPeerConnectionFactory()
-        // PeerConnectionFactory retains the native audio module after release().
-        module.release()
+        try {
+            factory = PeerConnectionFactory.builder()
+                .setAudioDeviceModule(module)
+                .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl.eglBaseContext, true, true))
+                .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl.eglBaseContext))
+                .createPeerConnectionFactory()
+        } finally {
+            module.release()
+        }
         audioSource = factory?.createAudioSource(MediaConstraints())
         audioTrack = factory?.createAudioTrack("microphone", audioSource)
         audioTrack?.setEnabled(role == Role.BABY)

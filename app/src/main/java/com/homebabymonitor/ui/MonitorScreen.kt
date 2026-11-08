@@ -37,6 +37,8 @@ import kotlin.math.roundToInt
 @Composable
 internal fun MonitorScreen(
     state: MonitorState,
+    crashAvailable: Boolean,
+    shareCrash: () -> Unit,
     startBaby: () -> Unit,
     startParent: (String, String) -> Unit,
     scanQr: () -> Unit,
@@ -92,6 +94,9 @@ internal fun MonitorScreen(
                 TextButton(onClick = { legalDocument = "THIRD_PARTY_NOTICES.md" }) {
                     Text("Лицензии", fontSize = 12.sp)
                 }
+            }
+            if (crashAvailable) {
+                TextButton(onClick = shareCrash) { Text("Отправить отчёт о последнем сбое") }
             }
             Spacer(Modifier.height(16.dp))
         }
