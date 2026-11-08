@@ -4,7 +4,7 @@
 
 Полный Android 16 tombstone с Xiaomi 24129PN74G показывает `SIGABRT` при `JNI_OnLoad` в `libjingle_peerconnection_so.so`. ART сообщает `JNI DETECTED ERROR IN APPLICATION: java_class == null in call to GetStaticMethodID`. Вызов происходит из `org.webrtc.NativeLibrary.initialize` при инициализации `PeerConnectionFactory`, ещё до захвата кадров камерой.
 
-Включённый R8 сохранял `org.webrtc.**`, но не `org.jni_zero.**`. Версия 0.4.7 добавляет правило `-keep class org.jni_zero.** { *; }` и проверку `JniInit` в release DEX в CI. Это вероятное устранение причины, но на устройстве пользователя ещё не проверено. Подписанный APK 0.4.7 пока не подготовлен.
+Включённый R8 сохранял `org.webrtc.**`, но не `org.jni_zero.**`. Версия 0.4.7 добавляет отсутствующий JNI Zero bootstrap-класс `org.jni_zero.JniInit` с методом `init()` согласно исходникам Chromium, правило `-keep class org.jni_zero.** { *; }` и проверку присутствия класса в release DEX. JVM-тест проверяет сигнатуру и возвращаемые значения; CI № 42494185442 успешно собрал и проверил release APK. На устройстве пользователя исправление ещё не проверено. Публикация подписанного APK зависит от отдельного рабочего процесса GitHub Actions.
 
 ## Диагностика аварийного завершения
 
