@@ -1,7 +1,5 @@
 name: Android device startup regression
 on:
-  push:
-    branches: [fix/android-startup-crash]
   workflow_dispatch:
 
 permissions:
