@@ -47,9 +47,19 @@ internal fun MonitorScreen(
     night: (Boolean) -> Unit,
     torch: (Boolean) -> Unit,
     quality: (VideoQuality) -> Unit,
-    music: (SleepSound, Int, Int) -> Unit
+    cameraMic: (Boolean) -> Unit,
+    speaker: (Boolean) -> Unit,
+    playbackVolume: (Int) -> Unit,
+    music: (SleepSound, Int, Int) -> Unit,
+    musicVolume: (Int) -> Unit
 ) {
     val context = LocalContext.current
+    var fullscreen by remember { mutableStateOf(false) }
+    LaunchedEffect(state.role) { if (state.role != Role.PARENT) fullscreen = false }
+    if (state.role == Role.PARENT && fullscreen) {
+        FullscreenMonitor(state, onClose = { fullscreen = false })
+        return
+    }
     var legalDocument by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().background(base).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 14.dp),
@@ -79,8 +89,10 @@ internal fun MonitorScreen(
             verticalArrangement = Arrangement.spacedBy(18.dp)) {
             when (state.role) {
                 null -> WelcomeScreen(startBaby, startParent, scanQr)
-                Role.BABY -> BabyCameraScreen(state, stop)
-                Role.PARENT -> ParentMonitorScreen(state, stop, talk, night, torch, quality, music)
+                Role.BABY -> BabyCameraScreen(state, stop, quality, cameraMic,
+                    speaker, playbackVolume, music, musicVolume)
+                Role.PARENT -> ParentMonitorScreen(state, stop, talk, night, torch,
+                    speaker, playbackVolume, music, musicVolume, onFullscreen = { fullscreen = true })
             }
             Text("Не заменяет присмотр за ребёнком", color = muted, fontSize = 13.sp)
             Row(Modifier.horizontalScroll(rememberScrollState()),
@@ -172,11 +184,23 @@ private fun WelcomeScreen(startBaby: () -> Unit, startParent: (String, String) -
 }
 
 @Composable
-private fun BabyCameraScreen(state: MonitorState, stop: () -> Unit) {
+private fun BabyCameraScreen(
+    state: MonitorState, stop: () -> Unit, quality: (VideoQuality) -> Unit,
+    cameraMic: (Boolean) -> Unit, speaker: (Boolean) -> Unit,
+    playbackVolume: (Int) -> Unit,
+    music: (SleepSound, Int, Int) -> Unit, musicVolume: (Int) -> Unit
+) {
     var revealPairing by remember { mutableStateOf(false) }
     LaunchedEffect(state.connected) { if (state.connected) revealPairing = false }
     val showPairing = com.homebabymonitor.core.PairingVisibility.show(state.connected, revealPairing)
     StatusHeader("Камера", state)
+
+    Text("Что видит камера", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+    VideoPane(state = state, cameraPreview = true,
+        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp)))
+    Text("Предпросмотр работает и до подключения монитора. Установите камеру, ориентируясь по изображению.",
+        color = muted, fontSize = 12.sp, lineHeight = 18.sp)
+
     val qrContent = remember(state.localIp, state.pairingPin) {
         runCatching { PairingLink.create(state.localIp, state.pairingPin) }.getOrNull()
     }
@@ -205,13 +229,45 @@ private fun BabyCameraScreen(state: MonitorState, stop: () -> Unit) {
         }
         Detail("IP-адрес", state.localIp)
     }
+
+    Panel {
+        Text("Качество видеопотока", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Text("Настройки применяются на телефоне камеры и сохраняются после перезапуска.",
+            color = muted, fontSize = 12.sp, lineHeight = 18.sp)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            VideoQuality.entries.forEach { mode ->
+                FilterChip(selected = state.videoQuality == mode.name,
+                    onClick = { quality(mode) }, label = { Text(mode.title) })
+            }
+        }
+        Detail("Фактическая съёмка", state.actualVideo.ifEmpty { "Запускается…" })
+        Text("Для Full HD и 2K нужна подходящая камера, аппаратный кодировщик и устойчивый Wi-Fi 5 ГГц. Частота 60 к/с не гарантируется.",
+            color = muted, fontSize = 12.sp, lineHeight = 18.sp)
+    }
+
+    Panel {
+        Text("Звук на телефоне камеры", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Микрофон камеры", color = Color.White)
+                Text("Передача звука в монитор", color = muted, fontSize = 12.sp)
+            }
+            Switch(checked = state.cameraMicEnabled, onCheckedChange = cameraMic)
+        }
+        if (!state.cameraMicEnabled) Text("Когда микрофон выключен, уведомления о громком звуке недоступны.",
+            color = coral, fontSize = 12.sp, lineHeight = 18.sp)
+        HorizontalDivider(color = faint)
+        IncomingAudioControls(state, "Звук с родительского телефона", speaker, playbackVolume)
+        Text("Обе стороны могут слышать друг друга одновременно. Следите за громкостью: близко расположенные устройства могут фонить.",
+            color = muted, fontSize = 12.sp, lineHeight = 18.sp)
+    }
     Panel {
         Text("Состояние камеры", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-        Detail("Видео", state.actualVideo.ifEmpty { "Ожидаем подключение" })
-        Detail("Режим", VideoQuality.fromWire(state.videoQuality)?.title ?: "HD · 30")
+        Detail("Режим", VideoQuality.fromWire(state.videoQuality)?.title ?: "—")
         Detail("Ночной режим", if (state.nightMode) "Включён" else "Выключен")
-        Detail("Мелодия", SleepSound.fromWire(state.musicSound)?.title ?: "Выключено")
+        Detail("Звуки для сна", SleepSound.fromWire(state.musicSound)?.title ?: "Выключены")
     }
+    SleepMusicPanel(state, music, musicVolume, localControls = true)
     Text("Экран можно погасить. Не закрывайте приложение через список запущенных.",
         color = muted, fontSize = 12.sp, lineHeight = 18.sp)
     OutlinedButton(onClick = stop, modifier = Modifier.fillMaxWidth()) { Text("Остановить камеру") }
@@ -221,43 +277,17 @@ private fun BabyCameraScreen(state: MonitorState, stop: () -> Unit) {
 private fun ParentMonitorScreen(
     state: MonitorState, stop: () -> Unit, talk: (Boolean) -> Unit,
     night: (Boolean) -> Unit, torch: (Boolean) -> Unit,
-    quality: (VideoQuality) -> Unit, music: (SleepSound, Int, Int) -> Unit
+    speaker: (Boolean) -> Unit, playbackVolume: (Int) -> Unit,
+    music: (SleepSound, Int, Int) -> Unit, musicVolume: (Int) -> Unit,
+    onFullscreen: () -> Unit
 ) {
     StatusHeader("Монитор", state)
-    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(22.dp))
-        .background(Color.Black), contentAlignment = Alignment.Center) {
-        AndroidView(factory = { context ->
-            SurfaceViewRenderer(context).apply {
-                init(MonitorBus.eglBase.eglBaseContext, null)
-                setEnableHardwareScaler(true)
-                setMirror(false)
-                MonitorBus.bindRenderer(this)
-            }
-        }, modifier = Modifier.fillMaxSize(), onRelease = {
-            MonitorBus.bindRenderer(null)
-            it.release()
-        })
-        if (!state.connected) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.WifiOff, null, tint = muted, modifier = Modifier.size(30.dp))
-                Spacer(Modifier.height(6.dp))
-                Text("Нет видеосигнала", color = Color.White, fontSize = 13.sp)
-            }
-        }
-        Surface(modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
-            color = Color(0xD919222B), shape = RoundedCornerShape(50)) {
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(7.dp).background(if (state.connected) teal else coral, CircleShape))
-                Spacer(Modifier.width(8.dp))
-                Text(if (state.connected) "Соединено" else "Отключено", color = Color.White, fontSize = 12.sp)
-            }
-        }
-        if (state.connected && state.actualVideo.isNotBlank()) {
-            Text(state.actualVideo, color = Color.White, fontSize = 11.sp,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)
-                    .background(Color(0xAA182027), RoundedCornerShape(8.dp)).padding(6.dp))
-        }
-    }
+    VideoPane(state, cameraPreview = false,
+        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(22.dp)),
+        onExpand = onFullscreen)
+    Text("Нажмите значок разворачивания справа вверху для полноэкранного просмотра.",
+        color = muted, fontSize = 12.sp, lineHeight = 18.sp)
+
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Surface(modifier = Modifier.weight(1f), color = panel, shape = RoundedCornerShape(15.dp)) {
             Column(Modifier.padding(15.dp)) {
@@ -274,29 +304,33 @@ private fun ParentMonitorScreen(
             }
         }
     }
+
     Panel {
-        Text("Качество видео", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            VideoQuality.entries.forEach { mode ->
-                FilterChip(selected = state.videoQuality == mode.name,
-                    onClick = { quality(mode) }, label = { Text(mode.title) })
-            }
-        }
-        Text("60 кадров/с и 2K зависят от камеры, кодировщика и Wi-Fi. Выбранный режим — запрос, фактический формат показан на видео.",
-            color = muted, fontSize = 11.sp, lineHeight = 16.sp)
+        Text("Видеопоток", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+        Detail("Профиль камеры", VideoQuality.fromWire(state.videoQuality)?.title ?: "—")
+        Detail("Принимаемый поток", state.actualVideo.ifEmpty { "Нет кадров" })
+        Detail("Скорость передачи", state.networkVideo.ifEmpty { "Измеряется…" })
+        Text("Качество и частота кадров выбираются на телефоне камеры. Скорость зависит от Wi-Fi и кодировщика.",
+            color = muted, fontSize = 12.sp, lineHeight = 18.sp)
     }
+
     Panel {
-        Text("Камера и звук", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+        Text("Просмотр и двусторонний звук", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+        IncomingAudioControls(state, "Слушать комнату ребёнка", speaker, playbackVolume)
+        if (!state.cameraMicEnabled) {
+            Text("Микрофон камеры отключён на втором телефоне.", color = coral, fontSize = 12.sp)
+        }
+        HorizontalDivider(color = faint)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = state.nightMode, onClick = { night(!state.nightMode) },
                 label = { Text("Ночная съёмка") }, leadingIcon = { Icon(Icons.Default.NightsStay, null, Modifier.size(16.dp)) })
             FilterChip(selected = state.torchOn, onClick = { torch(!state.torchOn) },
                 label = { Text("Фонарик") }, leadingIcon = { Icon(Icons.Default.FlashlightOn, null, Modifier.size(16.dp)) })
         }
-        Text("Удерживайте, чтобы говорить", color = muted, fontSize = 12.sp)
+        Text("Нажмите и удерживайте для разговора", color = muted, fontSize = 12.sp)
         Surface(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .pointerInput(state.connected) { detectTapGestures(onPress = {
-                if (state.connected) {
+            .pointerInput(state.connected, state.talking) { detectTapGestures(onPress = {
+                if (state.connected && !state.talking) {
                     talk(true)
                     try { tryAwaitRelease() } finally { talk(false) }
                 }
@@ -306,66 +340,102 @@ private fun ParentMonitorScreen(
                 verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Mic, null, tint = base)
                 Spacer(Modifier.width(8.dp))
-                Text(if (state.talking) "Говорите…" else "Говорить", color = base, fontWeight = FontWeight.SemiBold)
+                Text(if (state.talking) "Микрофон включён" else "Говорить", color = base,
+                    fontWeight = FontWeight.SemiBold)
             }
         }
-        TextButton(onClick = { talk(!state.talking) }, enabled = state.connected,
-            modifier = Modifier.fillMaxWidth()) {
-            Text(if (state.talking) "Выключить микрофон" else "Включить микрофон одним нажатием")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Разговор без удерживания", color = Color.White)
+                Text("Можно одновременно слушать ребёнка", color = muted, fontSize = 12.sp)
+            }
+            Switch(checked = state.talking, onCheckedChange = talk, enabled = state.connected)
         }
     }
-    SleepMusicPanel(state, music)
+    SleepMusicPanel(state, music, musicVolume, localControls = false)
     OutlinedButton(onClick = stop, modifier = Modifier.fillMaxWidth()) { Text("Завершить сеанс") }
 }
 
 @Composable
-private fun SleepMusicPanel(state: MonitorState, onMusic: (SleepSound, Int, Int) -> Unit) {
+private fun IncomingAudioControls(
+    state: MonitorState, title: String,
+    onSpeaker: (Boolean) -> Unit, onVolume: (Int) -> Unit
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Color.White)
+            Text("Воспроизведение на этом телефоне", color = muted, fontSize = 12.sp)
+        }
+        Switch(checked = state.speakerEnabled, onCheckedChange = onSpeaker)
+    }
+    var volume by remember { mutableFloatStateOf(state.playbackVolume.toFloat()) }
+    LaunchedEffect(state.playbackVolume) { volume = state.playbackVolume.toFloat() }
+    Text("Громкость входящего голоса · ${volume.roundToInt()} %", color = muted, fontSize = 12.sp)
+    Slider(value = volume, onValueChange = { volume = it }, valueRange = 0f..100f,
+        enabled = state.speakerEnabled,
+        onValueChangeFinished = { onVolume(volume.roundToInt()) })
+}
+
+@Composable
+private fun SleepMusicPanel(
+    state: MonitorState,
+    onMusic: (SleepSound, Int, Int) -> Unit,
+    onVolume: (Int) -> Unit,
+    localControls: Boolean
+) {
     var minutes by remember { mutableIntStateOf(30) }
-    var volume by remember { mutableFloatStateOf(20f) }
+    var volume by remember { mutableFloatStateOf(state.musicVolume.toFloat()) }
+    LaunchedEffect(state.musicVolume) { volume = state.musicVolume.toFloat() }
     val playing = SleepSound.fromWire(state.musicSound) ?: SleepSound.OFF
+    val enabled = localControls || state.connected
     Panel {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.MusicNote, null, tint = teal)
             Spacer(Modifier.width(10.dp))
             Column {
-                Text("Звуки для сна", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-                Text("Звучат на телефоне у ребёнка", color = muted, fontSize = 12.sp)
+                Text("Музыка и звуки для сна", color = Color.White,
+                    fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                Text("Воспроизводятся на телефоне камеры", color = muted, fontSize = 12.sp)
             }
         }
-        SleepSound.entries.filter { it != SleepSound.OFF }.forEach { sound ->
-            Surface(onClick = { onMusic(if (playing == sound) SleepSound.OFF else sound, minutes, volume.roundToInt()) },
-                enabled = state.connected, color = if (playing == sound) Color(0xFF275247) else faint, shape = RoundedCornerShape(12.dp)) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 13.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Icon(if (playing == sound) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        null, tint = if (playing == sound) teal else muted)
-                    Spacer(Modifier.width(10.dp))
-                    Text(sound.title, color = Color.White, modifier = Modifier.weight(1f))
-                    if (playing == sound) Text("Играет", color = teal, fontSize = 12.sp)
+        for (melody in listOf(true, false)) {
+            Text(if (melody) "Мелодии" else "Фоновые звуки",
+                color = muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            SleepSound.entries.filter { it != SleepSound.OFF && it.melody == melody }.forEach { sound ->
+                Surface(onClick = {
+                    onMusic(if (playing == sound) SleepSound.OFF else sound, minutes, volume.roundToInt())
+                }, enabled = enabled,
+                    color = if (playing == sound) Color(0xFF275247) else faint,
+                    shape = RoundedCornerShape(12.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Icon(if (playing == sound) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            null, tint = if (playing == sound) teal else muted)
+                        Spacer(Modifier.width(10.dp))
+                        Text(sound.title, color = Color.White, modifier = Modifier.weight(1f))
+                        if (playing == sound) Text("Играет", color = teal, fontSize = 12.sp)
+                    }
                 }
             }
         }
         if (playing != SleepSound.OFF) {
             Detail("Осталось", "${(state.musicRemainingSeconds / 60).coerceAtLeast(0)} мин")
             TextButton(onClick = { onMusic(SleepSound.OFF, minutes, volume.roundToInt()) },
-                enabled = state.connected) {
-                Text("Остановить музыку")
-            }
+                enabled = enabled) { Text("Остановить звук") }
         }
         Text("Таймер", color = muted, fontSize = 12.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(10, 30, 60).forEach { value ->
-                FilterChip(selected = minutes == value, onClick = { minutes = value },
-                    label = { Text("$value мин") })
+            listOf(10, 30, 60).forEach { time ->
+                FilterChip(selected = minutes == time, onClick = { minutes = time },
+                    label = { Text("$time мин") })
             }
         }
-        Text("Громкость на телефоне у ребёнка · ${volume.roundToInt()} %", color = muted, fontSize = 12.sp)
+        Text("Громкость звуков для сна · ${volume.roundToInt()} %", color = muted, fontSize = 12.sp)
         Slider(value = volume, onValueChange = { volume = it }, valueRange = 0f..60f,
-            enabled = state.connected,
-            onValueChangeFinished = {
-                if (playing != SleepSound.OFF) onMusic(playing, minutes, volume.roundToInt())
-            })
-        if (!state.connected) Text("Звуки можно включать после подключения.",
+            enabled = enabled, onValueChangeFinished = { onVolume(volume.roundToInt()) })
+        Text("Держите звук негромким и не ставьте телефон вплотную к ребёнку.",
             color = muted, fontSize = 12.sp, lineHeight = 18.sp)
+        if (!enabled) Text("Управление звуками появится после подключения камеры.",
+            color = muted, fontSize = 12.sp)
     }
 }
