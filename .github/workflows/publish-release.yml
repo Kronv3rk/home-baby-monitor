@@ -54,7 +54,7 @@ jobs:
           EXPECTED="f0fcd91e6307440ec04200480fb3f48491627e4fd3f70fa93069037274c43a9c"
           ACTUAL="$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' "$RUNNER_TEMP/signature.txt" | tr 'A-F' 'a-f')"
           test "$ACTUAL" = "$EXPECTED" || { echo "::error::Unexpected signing certificate"; exit 1; }
-          sha256sum "$APK" > distribution/SHA256SUMS.txt
+          (cd distribution && sha256sum "HomeBabyMonitor-v${VERSION}-release.apk" > SHA256SUMS.txt)
           echo "TAG=v$VERSION" >> "$GITHUB_ENV"
           echo "APK=$APK" >> "$GITHUB_ENV"
           rm -f "$KEYFILE"
