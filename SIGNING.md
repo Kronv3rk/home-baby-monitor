@@ -38,7 +38,7 @@ Debug-сборки и подписанные release-сборки имеют р�
 
 ## Защита репозитория перед сохранением ключа в GitHub
 
-Сначала откройте [Rulesets](https://github.com/Kronv3rk/home-baby-monitor/settings/rules) и создайте активный **branch ruleset** для `main`. Включите:
+Сначала откройте [Rulesets](https://github.com/Kronv3rk/home-baby-monitor/settings/rules) и выберите **New ruleset → Import a ruleset**. Импортируйте [`main-branch.ruleset.json`](.github/rulesets/main-branch.ruleset.json), проверьте настройки и нажмите Create. Файл в репозитории — **только шаблон**: его наличие само по себе не включает защиту GitHub. Правило должно иметь статус **Active**. В шаблоне настроены:
 
 - Require a pull request before merging (0 approvals при одном сопровождающем; 1 или больше при наличии независимого ревьюера).
 - Require status checks to pass: **Tests, lint, release package**.
