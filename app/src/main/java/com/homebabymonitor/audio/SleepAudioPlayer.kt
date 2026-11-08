@@ -22,7 +22,7 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
     @Volatile private var volumePercent = 20
     private var worker: Thread? = null
 
-    fun play(sound: SleepSound, minutes: Int, volume: Int) {
+    @Synchronized fun play(sound: SleepSound, minutes: Int, volume: Int) {
         stop()
         if (sound == SleepSound.OFF) return
         val sessionId = generation.incrementAndGet()
@@ -33,7 +33,7 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
         worker = Thread({ render(sessionId) }, "sleep-audio").apply { isDaemon = true; start() }
     }
 
-    fun stop() {
+    @Synchronized fun stop() {
         generation.incrementAndGet()
         running.set(false)
         selected = SleepSound.OFF
@@ -56,9 +56,11 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
             rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
         if (minBuffer <= 0) {
-            running.set(false)
-            selected = SleepSound.OFF
-            onError("Не удалось открыть динамик")
+            if (generation.compareAndSet(sessionId, sessionId + 1)) {
+                running.set(false)
+                selected = SleepSound.OFF
+                onError("Не удалось открыть динамик")
+            }
             return
         }
         var track: AudioTrack? = null
@@ -111,7 +113,8 @@ class SleepAudioPlayer(private val onError: (String) -> Unit) {
         } catch (_: InterruptedException) {
             // Stopped by user.
         } catch (e: Exception) {
-            if (running.get()) onError("Не удалось воспроизвести звук: ${e.message}")
+            if (running.get() && generation.get() == sessionId)
+                onError("Не удалось воспроизвести звук: ${e.message}")
         } finally {
             if (generation.compareAndSet(sessionId, sessionId + 1)) {
                 running.set(false)

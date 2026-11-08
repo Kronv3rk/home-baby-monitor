@@ -36,6 +36,11 @@ class CoreTest {
         }
     }
 
+    @Test fun iceCandidateWithEmptyMediaIdMustRoundTrip() {
+        val ice = WireMessage.Ice("", 0, "candidate:1 1 udp 123 192.168.1.2 5000 typ host")
+        assertEquals(ice, WireProtocol.decode(WireProtocol.encode(ice)))
+    }
+
     @Test fun roundTripSignalling() {
         for (message in listOf(
             WireMessage.Challenge(PairingCode.newChallenge()), WireMessage.Proof, WireMessage.Accept, WireMessage.Reject, WireMessage.Ping,
@@ -57,6 +62,24 @@ class CoreTest {
         var alarms = 0
         for (t in 1..50) if (detector.feed(loud, 48000, 1, t * 10L)) alarms++
         assertEquals(1, alarms)
+    }
+
+    @Test fun localIpRejectsLinkLocalAddresses() {
+        assertFalse(LocalAddress.isPrivateIpv4("169.254.10.3"))
+        assertFalse(LocalAddress.isPrivateIpv4("192.168.1.256"))
+    }
+
+    @Test fun videoSettingsUseExistingCaptureFormatWhenNoSmallerOneExists() {
+        val onlyFormat = CaptureOption(3840, 2160, 30)
+        assertEquals(onlyFormat, VideoQuality.QHD_60.chooseFormat(listOf(onlyFormat)))
+    }
+
+    @Test fun discoveryRejectsUnknownPacketsAndPublicSources() {
+        assertFalse(com.homebabymonitor.net.isCameraBeacon("wrong", "192.168.2.3"))
+        assertFalse(com.homebabymonitor.net.isCameraBeacon(
+            com.homebabymonitor.net.LocalPorts.BEACON, "8.8.8.8"))
+        assertTrue(com.homebabymonitor.net.isCameraBeacon(
+            com.homebabymonitor.net.LocalPorts.BEACON, "192.168.2.3"))
     }
 
     @Test fun onlyLocalIpv4TargetsAreAccepted() {

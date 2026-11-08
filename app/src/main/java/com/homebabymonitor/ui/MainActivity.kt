@@ -51,7 +51,15 @@ class MainActivity : ComponentActivity() {
         if (needed.all { permission -> ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED }) {
             finishPermissionFlow()
         } else {
-            MonitorBus.mutate { state -> state.copy(error = "Разрешите доступ к микрофону, камере и локальной сети в настройках Android") }
+            val missing = needed.filter { permission ->
+                ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED
+            }
+            val text = when {
+                Manifest.permission.CAMERA in missing -> "Для камеры нужны доступ к съёмке и микрофону"
+                Manifest.permission.RECORD_AUDIO in missing -> "Разрешите доступ к микрофону"
+                else -> "Разрешите поиск устройств поблизости"
+            }
+            MonitorBus.mutate { state -> state.copy(error = text) }
             pendingStart = null
         }
         pendingRequired = emptyList()
@@ -65,7 +73,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startSession(role: Role, ip: String, pin: String) {
         if (role == Role.PARENT && PairingCode.normalize(pin) == null) {
-            MonitorBus.mutate { it.copy(error = "Введите весь защищённый код с экрана камеры (20 символов)") }
+            MonitorBus.mutate { it.copy(error = "Введите код из 20 символов с экрана камеры") }
             return
         }
         if (role == Role.PARENT && ip.isNotBlank() && !LocalAddress.isPrivateIpv4(ip.trim())) {
@@ -93,7 +101,7 @@ class MainActivity : ComponentActivity() {
         pendingStart = null
         if (granted) start?.invoke()
         else MonitorBus.mutate { state ->
-            state.copy(error = "Без разрешения на уведомления нельзя надёжно предупреждать о потере связи. Разрешите уведомления в настройках Android.")
+            state.copy(error = "Разрешите уведомления, чтобы получать сигналы о потере связи")
         }
     }
 
@@ -115,6 +123,12 @@ class MainActivity : ComponentActivity() {
             this.action = action
             if (value != null) putExtra(MonitorService.EXTRA_VALUE, value)
         })
+    }
+
+    override fun onStop() {
+        if (MonitorBus.state.value.role == Role.PARENT && MonitorBus.state.value.talking)
+            sendCommand(MonitorService.ACTION_TALK, false)
+        super.onStop()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

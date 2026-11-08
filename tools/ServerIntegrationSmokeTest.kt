@@ -59,6 +59,19 @@ fun main() {
         parent.start()
         check(parentAccepted.await(4, TimeUnit.SECONDS)) { "Parent connector did not authenticate" }
         parent.stop()
+
+        val pairingFailed = CountDownLatch(1)
+        val unexpectedDisconnect = AtomicInteger(0)
+        val wrongParent = ParentConnector(
+            "127.0.0.1", PairingCode.generate(),
+            { _, _ -> error("Wrong code must never connect") },
+            {}, { unexpectedDisconnect.incrementAndGet() }, {},
+            { pairingFailed.countDown() }
+        )
+        wrongParent.start()
+        check(pairingFailed.await(6, TimeUnit.SECONDS)) { "Wrong code was not rejected" }
+        wrongParent.stop()
+        check(unexpectedDisconnect.get() == 0) { "Unauthenticated client triggered session loss" }
     } finally { baby.stop() }
     println("ServerIntegrationSmokeTest: ALL PASSED")
 }

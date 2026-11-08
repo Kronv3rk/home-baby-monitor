@@ -5,3 +5,12 @@ local.properties
 *.iml
 *.apk
 .DS_Store
+
+# Never publish release signing material
+*.p12
+*.jks
+*.keystore
+*.pem
+*.key
+*signing*.properties
+*key-credentials*.txt

@@ -31,7 +31,10 @@ internal fun StatusHeader(title: String, state: MonitorState) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(title, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.SemiBold)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.size(8.dp).background(if (state.connected) teal else coral, CircleShape))
+            Box(Modifier.size(8.dp).background(
+                if (state.connected) teal else if (state.error.isNotBlank()) coral else muted,
+                CircleShape
+            ))
             Text(state.status, color = muted, fontSize = 13.sp)
         }
     }

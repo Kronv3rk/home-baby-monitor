@@ -29,5 +29,7 @@ fun main() {
     check(VideoQuality.QHD_60.chooseFormat(options) == CaptureOption(1920,1080,60))
     check(VideoQuality.FHD_60.chooseFormat(options) == CaptureOption(1920,1080,60))
     check(VideoQuality.QHD_60.chooseFormat(options + CaptureOption(2560,1440,60)) == CaptureOption(2560,1440,60))
+    val onlyFormat = CaptureOption(3840, 2160, 30)
+    check(VideoQuality.QHD_60.chooseFormat(listOf(onlyFormat)) == onlyFormat)
     println("InteractionSmokeTest PASSED")
 }

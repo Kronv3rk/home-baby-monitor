@@ -19,6 +19,7 @@ enum class VideoQuality(
         val fast = sizeMatches.filter { it.fps >= fps }
         return fast.maxByOrNull { it.width.toLong() * it.height }
             ?: sizeMatches.maxWithOrNull(compareBy<CaptureOption> { it.fps }.thenBy { it.width.toLong() * it.height })
+            ?: usable.minWithOrNull(compareBy<CaptureOption> { it.width.toLong() * it.height }.thenByDescending { it.fps })
             ?: CaptureOption(width, height, fps)
     }
 

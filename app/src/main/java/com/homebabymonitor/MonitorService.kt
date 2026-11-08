@@ -94,8 +94,9 @@ class MonitorService : Service() {
             ACTION_PARENT -> launch(Role.PARENT, intent.getStringExtra(EXTRA_IP).orEmpty(), intent.getStringExtra(EXTRA_PIN).orEmpty())
             ACTION_TALK -> {
                 val value = intent.getBooleanExtra(EXTRA_VALUE, false)
-                engine?.setTalking(value)
-                MonitorBus.mutate { it.copy(talking = value) }
+                val enabled = value && role == Role.PARENT && MonitorBus.state.value.connected
+                engine?.setTalking(enabled)
+                MonitorBus.mutate { it.copy(talking = enabled) }
             }
             ACTION_NIGHT -> {
                 val value = intent.getBooleanExtra(EXTRA_VALUE, false)
@@ -132,7 +133,7 @@ class MonitorService : Service() {
     private fun launch(newRole: Role, ip: String, pin: String) {
         if (running.get()) return
         if (newRole == Role.PARENT && PairingCode.normalize(pin) == null) {
-            MonitorBus.mutate { it.copy(error = "Введите полный 20-символьный защищённый код с телефона у ребёнка") }
+            MonitorBus.mutate { it.copy(error = "Введите код из 20 символов с экрана камеры") }
             stopSelf()
             return
         }
@@ -160,7 +161,7 @@ class MonitorService : Service() {
             localIp = LocalIp.current(this),
             pairingPin = if (newRole == Role.BABY) PairingCode.generate() else "",
             remoteIp = ip,
-            status = if (newRole == Role.BABY) "Камера запускается…" else "Поиск камеры…"
+            status = if (newRole == Role.BABY) "Запускаем камеру…" else "Ищем камеру…"
         )
         awaitLocalWifi(newRole, ip, pin)
     }
@@ -211,7 +212,7 @@ class MonitorService : Service() {
                 onVideoFrame = { onVideoFrameReceived() },
                 onCaptureMetrics = { metrics ->
                     MonitorBus.mutate { it.copy(actualVideo = metrics) }
-                    engine?.sendControl("VIDEO_INFO:$metrics")
+                    // Receiver frame rate is measured separately by the decoded video sink.
                 },
                 onError = { error -> MonitorBus.mutate { it.copy(error = error) } }
             ).also { it.start() }
@@ -231,14 +232,14 @@ class MonitorService : Service() {
                 pin = code,
                 onConnected = { session, remote ->
                     pipe = session
-                    MonitorBus.mutate { it.copy(remoteIp = remote, status = "Подключается родительский телефон…") }
+                    MonitorBus.mutate { it.copy(remoteIp = remote, status = "Подключаем второй телефон…") }
                     engine?.preparePeer(false)
                 },
                 onMessage = { engine?.onSignal(it) },
                 onDisconnected = { onSignalDisconnected() },
                 onError = { message -> MonitorBus.mutate { it.copy(error = message) } }
             ).also { it.start() }
-            beacon = BabyBeacon().also { it.start() }
+            beacon = BabyBeacon(localIp).also { it.start() }
             MonitorBus.mutate { it.copy(status = "Ожидание родительского телефона") }
         } else {
             connector = ParentConnector(
@@ -246,15 +247,17 @@ class MonitorService : Service() {
                 pin = pin,
                 onConnected = { session, remote ->
                     pipe = session
-                    MonitorBus.mutate { it.copy(remoteIp = remote, status = "Согласование видеосвязи…") }
+                    MonitorBus.mutate { it.copy(remoteIp = remote, status = "Подключаем видео…") }
                     engine?.preparePeer(true)
                 },
                 onMessage = { engine?.onSignal(it) },
                 onDisconnected = { onSignalDisconnected() },
-                onStatus = { message ->
-                    MonitorBus.mutate { it.copy(status = message, error = if (message.startsWith("Неверный")) message else it.error) }
-                    if (message.startsWith("Неверный")) stopSelf()
-                }
+                onStatus = { message -> MonitorBus.mutate { it.copy(status = message) } },
+                onPairingFailed = {
+                    MonitorBus.mutate { it.copy(error = "Код подключения не подошёл") }
+                    stopSelf()
+                },
+                localBindIp = wifiIp
             ).also { it.start() }
         }
         ticker = Executors.newSingleThreadScheduledExecutor().also { scheduler ->
@@ -271,7 +274,7 @@ class MonitorService : Service() {
                     watchdog.connected(SystemClock.elapsedRealtime())
                     firstVideoFrameReceived.set(false)
                     alarmedForOutage = false
-                    MonitorBus.mutate { it.copy(connected = false, status = "Соединение установлено, ожидаем видео…", error = "") }
+                    MonitorBus.mutate { it.copy(connected = false, status = "Связь есть. Загружаем видео…", error = "") }
                 }
             } else {
                 MonitorBus.mutate { it.copy(connected = true, status = "Связь установлена", error = "") }
@@ -279,7 +282,8 @@ class MonitorService : Service() {
         } else {
             iceConnected.set(false)
             firstVideoFrameReceived.set(false)
-            MonitorBus.mutate { it.copy(connected = false, status = "Проверяем соединение…") }
+            engine?.setTalking(false)
+            MonitorBus.mutate { it.copy(connected = false, talking = false, status = "Проверяем связь…") }
         }
     }
 
@@ -287,7 +291,7 @@ class MonitorService : Service() {
         if (!running.get() || role != Role.PARENT || !iceConnected.get()) return
         watchdog.videoFrame(SystemClock.elapsedRealtime())
         if (firstVideoFrameReceived.compareAndSet(false, true)) {
-            MonitorBus.mutate { it.copy(connected = true, status = "Видеосигнал поступает", error = "") }
+            MonitorBus.mutate { it.copy(connected = true, status = "Видео идёт", error = "") }
         }
     }
 
@@ -296,11 +300,12 @@ class MonitorService : Service() {
         pipe = null
         iceConnected.set(false)
         firstVideoFrameReceived.set(false)
+        engine?.setTalking(false)
         engine?.closePeer()
-        sleepPlayer.stop()
         qualityPending = true
-        MonitorBus.mutate { state -> state.copy(connected = false, status =
-            if (state.error.startsWith("Неверный")) state.status else "Связь прервана — переподключение") }
+        MonitorBus.mutate {
+            it.copy(connected = false, talking = false, status = "Связь прервана. Подключаемся заново")
+        }
     }
 
     private fun handleControl(message: String) {
@@ -308,14 +313,13 @@ class MonitorService : Service() {
             message == "LOCAL_SOUND" -> MonitorBus.mutate { it.copy(lastSoundAt = System.currentTimeMillis()) }
             role == Role.PARENT && message == "SOUND" -> {
                 MonitorBus.mutate { it.copy(lastSoundAt = System.currentTimeMillis()) }
-                alert("Возможно, ребёнок проснулся", "Камера обнаружила продолжительный громкий звук", 400)
+                alert("Громкий звук в комнате", "Камера зафиксировала продолжительный громкий звук", 400)
             }
             role == Role.PARENT && message == "PING" -> watchdog.heartbeat(SystemClock.elapsedRealtime())
             role == Role.PARENT && message.startsWith("LOCAL_RECEIVED:") -> {
                 val measured = message.removePrefix("LOCAL_RECEIVED:")
                 if (measured.length <= 60) MonitorBus.mutate { it.copy(actualVideo = measured) }
             }
-            role == Role.PARENT && message.startsWith("VIDEO_INFO:") -> Unit
             role == Role.BABY && message.startsWith("QUALITY:") -> {
                 VideoQuality.fromWire(message.removePrefix("QUALITY:"))?.let { profile ->
                     engine?.setQuality(profile)

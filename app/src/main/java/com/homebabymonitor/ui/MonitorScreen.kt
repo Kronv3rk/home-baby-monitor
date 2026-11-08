@@ -17,7 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,7 +47,8 @@ internal fun MonitorScreen(
     quality: (VideoQuality) -> Unit,
     music: (SleepSound, Int, Int) -> Unit
 ) {
-    val browser = LocalUriHandler.current
+    val context = LocalContext.current
+    var legalDocument by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().background(base).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -57,6 +58,21 @@ internal fun MonitorScreen(
             Spacer(Modifier.weight(1f))
             Box(Modifier.size(8.dp).background(if (state.connected) teal else faint, CircleShape))
         }
+        if (state.error.isNotBlank()) {
+            Surface(
+                color = Color(0xFF463038),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp)
+            ) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = coral)
+                    Spacer(Modifier.width(10.dp))
+                    Text(state.error, color = Color.White, fontSize = 13.sp,
+                        lineHeight = 18.sp, modifier = Modifier.weight(1f), maxLines = 3,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+            }
+        }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)) {
             when (state.role) {
@@ -64,26 +80,49 @@ internal fun MonitorScreen(
                 Role.BABY -> BabyCameraScreen(state, stop)
                 Role.PARENT -> ParentMonitorScreen(state, stop, talk, night, torch, quality, music)
             }
-            if (state.error.isNotBlank()) {
-                Surface(color = Color(0xFF463038), shape = RoundedCornerShape(16.dp)) {
-                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.ErrorOutline, null, tint = coral)
-                        Spacer(Modifier.width(10.dp))
-                        Text(state.error, color = Color.White, fontSize = 13.sp)
-                    }
-                }
-            }
-            Text("Бета-версия · Не заменяет присмотр за ребёнком", color = muted, fontSize = 11.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(onClick = { browser.openUri("https://github.com/Kronv3rk/home-baby-monitor/blob/main/PRIVACY.md") }) {
+            Text("Не заменяет присмотр за ребёнком", color = muted, fontSize = 13.sp)
+            Row(Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { legalDocument = "PRIVACY.md" }) {
                     Text("Конфиденциальность", fontSize = 12.sp)
                 }
-                TextButton(onClick = { browser.openUri("https://github.com/Kronv3rk/home-baby-monitor/blob/main/THIRD_PARTY_NOTICES.md") }) {
+                TextButton(onClick = { legalDocument = "SAFETY_AND_TERMS.md" }) {
+                    Text("Безопасность", fontSize = 12.sp)
+                }
+                TextButton(onClick = { legalDocument = "THIRD_PARTY_NOTICES.md" }) {
                     Text("Лицензии", fontSize = 12.sp)
                 }
             }
             Spacer(Modifier.height(16.dp))
         }
+    }
+    if (legalDocument != null) {
+        val doc = legalDocument!!
+        val title = when (doc) {
+            "PRIVACY.md" -> "Конфиденциальность"
+            "SAFETY_AND_TERMS.md" -> "Безопасность"
+            else -> "Лицензии"
+        }
+        val content = remember(doc) {
+            runCatching {
+                context.assets.open("legal/$doc").bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    .replace(Regex("(?m)^#{1,5} +"), "")
+                    .replace("**", "")
+                    .replace("`", "")
+            }.getOrElse { "Не удалось открыть документ" }
+        }
+        AlertDialog(
+            onDismissRequest = { legalDocument = null },
+            title = { Text(title) },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text(content, fontSize = 13.sp, lineHeight = 19.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { legalDocument = null }) { Text("Закрыть") }
+            }
+        )
     }
 }
 
@@ -92,11 +131,11 @@ private fun WelcomeScreen(startBaby: () -> Unit, startParent: (String, String) -
     var showManual by remember { mutableStateOf(false) }
     var pin by remember { mutableStateOf("") }
     var ip by remember { mutableStateOf("") }
-    Text("Одна сеть. Два телефона.", fontWeight = FontWeight.SemiBold,
+    Text("Подключение", fontWeight = FontWeight.SemiBold,
         fontSize = 28.sp, lineHeight = 34.sp, color = Color.White)
-    Text("Телефон с камерой остаётся в комнате ребёнка. Второй показывает видео и воспроизводит звук.",
+    Text("Один телефон передаёт видео и звук, второй показывает трансляцию.",
         color = muted, fontSize = 14.sp, lineHeight = 21.sp)
-    ActionCard(Icons.Default.Videocam, "Камера", "Оставить телефон у ребёнка", startBaby)
+    ActionCard(Icons.Default.Videocam, "Камера", "В комнате ребёнка, вне его досягаемости", startBaby)
     Panel {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.PhoneAndroid, null, tint = teal)
@@ -124,7 +163,7 @@ private fun WelcomeScreen(startBaby: () -> Unit, startParent: (String, String) -
                 modifier = Modifier.fillMaxWidth()) { Text("Подключиться") }
         }
     }
-    Text("Работает через домашний Wi-Fi, без облака и регистрации.", color = muted, fontSize = 12.sp)
+    Text("Оба телефона должны быть в одной Wi-Fi-сети.", color = muted, fontSize = 12.sp)
 }
 
 @Composable
@@ -212,8 +251,8 @@ private fun ParentMonitorScreen(
         }
         Surface(modifier = Modifier.weight(1f), color = panel, shape = RoundedCornerShape(15.dp)) {
             Column(Modifier.padding(15.dp)) {
-                Text("Звук в комнате", color = muted, fontSize = 12.sp)
-                Text(if (state.lastSoundAt > 0) "Был громкий звук" else "Без тревог",
+                Text("Громкий звук", color = muted, fontSize = 12.sp)
+                Text(if (state.lastSoundAt > 0) "Был сигнал" else "Не обнаружен",
                     color = Color.White, fontWeight = FontWeight.Medium, fontSize = 15.sp)
             }
         }
@@ -231,7 +270,7 @@ private fun ParentMonitorScreen(
     }
     Panel {
         Text("Камера и звук", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = state.nightMode, onClick = { night(!state.nightMode) },
                 label = { Text("Ночная съёмка") }, leadingIcon = { Icon(Icons.Default.NightsStay, null, Modifier.size(16.dp)) })
             FilterChip(selected = state.torchOn, onClick = { torch(!state.torchOn) },
@@ -239,9 +278,11 @@ private fun ParentMonitorScreen(
         }
         Text("Удерживайте, чтобы говорить", color = muted, fontSize = 12.sp)
         Surface(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .pointerInput(Unit) { detectTapGestures(onPress = {
-                talk(true)
-                try { tryAwaitRelease() } finally { talk(false) }
+            .pointerInput(state.connected) { detectTapGestures(onPress = {
+                if (state.connected) {
+                    talk(true)
+                    try { tryAwaitRelease() } finally { talk(false) }
+                }
             }) }, color = if (state.talking) Color(0xFF4DA78E) else teal,
             shape = RoundedCornerShape(16.dp)) {
             Row(Modifier.padding(17.dp), horizontalArrangement = Arrangement.Center,
@@ -250,6 +291,10 @@ private fun ParentMonitorScreen(
                 Spacer(Modifier.width(8.dp))
                 Text(if (state.talking) "Говорите…" else "Говорить", color = base, fontWeight = FontWeight.SemiBold)
             }
+        }
+        TextButton(onClick = { talk(!state.talking) }, enabled = state.connected,
+            modifier = Modifier.fillMaxWidth()) {
+            Text(if (state.talking) "Выключить микрофон" else "Включить микрофон одним нажатием")
         }
     }
     SleepMusicPanel(state, music)
@@ -266,13 +311,13 @@ private fun SleepMusicPanel(state: MonitorState, onMusic: (SleepSound, Int, Int)
             Icon(Icons.Default.MusicNote, null, tint = teal)
             Spacer(Modifier.width(10.dp))
             Column {
-                Text("Колыбельные", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                Text("Звуки для сна", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                 Text("Звучат на телефоне у ребёнка", color = muted, fontSize = 12.sp)
             }
         }
         SleepSound.entries.filter { it != SleepSound.OFF }.forEach { sound ->
             Surface(onClick = { onMusic(if (playing == sound) SleepSound.OFF else sound, minutes, volume.roundToInt()) },
-                color = if (playing == sound) Color(0xFF275247) else faint, shape = RoundedCornerShape(12.dp)) {
+                enabled = state.connected, color = if (playing == sound) Color(0xFF275247) else faint, shape = RoundedCornerShape(12.dp)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 13.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Icon(if (playing == sound) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -285,7 +330,8 @@ private fun SleepMusicPanel(state: MonitorState, onMusic: (SleepSound, Int, Int)
         }
         if (playing != SleepSound.OFF) {
             Detail("Осталось", "${(state.musicRemainingSeconds / 60).coerceAtLeast(0)} мин")
-            TextButton(onClick = { onMusic(SleepSound.OFF, minutes, volume.roundToInt()) }) {
+            TextButton(onClick = { onMusic(SleepSound.OFF, minutes, volume.roundToInt()) },
+                enabled = state.connected) {
                 Text("Остановить музыку")
             }
         }
@@ -298,10 +344,11 @@ private fun SleepMusicPanel(state: MonitorState, onMusic: (SleepSound, Int, Int)
         }
         Text("Громкость на телефоне у ребёнка · ${volume.roundToInt()} %", color = muted, fontSize = 12.sp)
         Slider(value = volume, onValueChange = { volume = it }, valueRange = 0f..60f,
+            enabled = state.connected,
             onValueChangeFinished = {
                 if (playing != SleepSound.OFF) onMusic(playing, minutes, volume.roundToInt())
             })
-        Text("Мелодии создаются внутри приложения; чужие аудиозаписи не используются.", color = muted,
-            fontSize = 11.sp, lineHeight = 16.sp)
+        if (!state.connected) Text("Звуки можно включать после подключения.",
+            color = muted, fontSize = 12.sp, lineHeight = 18.sp)
     }
 }

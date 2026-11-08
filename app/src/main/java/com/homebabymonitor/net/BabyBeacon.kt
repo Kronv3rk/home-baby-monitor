@@ -7,7 +7,7 @@ import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 
-class BabyBeacon {
+class BabyBeacon(private val bindIp: String) {
     private val running = AtomicBoolean(false)
     private var thread: Thread? = null
     private var socket: DatagramSocket? = null
@@ -16,7 +16,9 @@ class BabyBeacon {
         if (!running.compareAndSet(false, true)) return
         thread = Thread({
             try {
-                DatagramSocket().use { sock ->
+                DatagramSocket(null).use { sock ->
+                    sock.reuseAddress = true
+                    sock.bind(InetSocketAddress(bindIp, 0))
                     socket = sock
                     sock.broadcast = true
                     val content = LocalPorts.BEACON.toByteArray(StandardCharsets.US_ASCII)

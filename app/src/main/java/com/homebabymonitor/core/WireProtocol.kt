@@ -23,6 +23,8 @@ object WireProtocol {
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
     private fun b64(value: String): String = encoder.encodeToString(value.toByteArray(Charsets.UTF_8))
+    private fun midCode(value: String): String = if (value.isEmpty()) "~" else b64(value)
+    private fun midText(value: String): String = if (value == "~") "" else unb64(value)
     private fun unb64(value: String): String = Charsets.UTF_8.newDecoder()
         .onMalformedInput(CodingErrorAction.REPORT)
         .onUnmappableCharacter(CodingErrorAction.REPORT)
@@ -37,7 +39,7 @@ object WireProtocol {
         WireMessage.Ping -> "PING"
         is WireMessage.Offer -> "OFFER ${b64(message.sdp)}"
         is WireMessage.Answer -> "ANSWER ${b64(message.sdp)}"
-        is WireMessage.Ice -> "ICE ${b64(message.mid)} ${message.index} ${b64(message.candidate)}"
+        is WireMessage.Ice -> "ICE ${midCode(message.mid)} ${message.index} ${b64(message.candidate)}"
     }
 
     fun decode(line: String): WireMessage? {
@@ -54,7 +56,7 @@ object WireProtocol {
                 parts.size == 2 && parts[0] == "OFFER" -> WireMessage.Offer(unb64(parts[1]))
                 parts.size == 2 && parts[0] == "ANSWER" -> WireMessage.Answer(unb64(parts[1]))
                 parts.size == 4 && parts[0] == "ICE" && parts[2].toIntOrNull() in 0..10 ->
-                    WireMessage.Ice(unb64(parts[1]), parts[2].toInt(), unb64(parts[3]))
+                    WireMessage.Ice(midText(parts[1]), parts[2].toInt(), unb64(parts[3]))
                 else -> null
             }
         } catch (_: IllegalArgumentException) {

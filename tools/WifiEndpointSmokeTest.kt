@@ -1,3 +1,4 @@
+import com.homebabymonitor.core.LocalAddress
 import com.homebabymonitor.core.WifiCandidate
 import com.homebabymonitor.core.WifiEndpointSelector
 
@@ -13,5 +14,6 @@ fun main() {
         listOf("192.168.1.9")))) == null)
     check(WifiEndpointSelector.choose(listOf(WifiCandidate(true, true,
         listOf("8.8.8.8")))) == null)
+    check(!LocalAddress.isPrivateIpv4("169.254.10.3"))
     println("WifiEndpointSmokeTest: PASS")
 }

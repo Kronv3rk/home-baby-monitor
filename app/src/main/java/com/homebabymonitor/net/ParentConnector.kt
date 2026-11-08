@@ -13,7 +13,9 @@ class ParentConnector(
     private val onConnected: (SignalPipe, String) -> Unit,
     private val onMessage: (WireMessage) -> Unit,
     private val onDisconnected: () -> Unit,
-    private val onStatus: (String) -> Unit
+    private val onStatus: (String) -> Unit,
+    private val onPairingFailed: () -> Unit = {},
+    private val localBindIp: String? = null
 ) {
     private val running = AtomicBoolean(false)
     @Volatile private var activePipe: SignalPipe? = null
@@ -41,7 +43,6 @@ class ParentConnector(
                 if (running.get()) onStatus("Связь потеряна. Переподключаемся…")
             } finally {
                 activePipe = null
-                onDisconnected()
             }
             if (ipOverride.isBlank()) lastIp = ""
             try {
@@ -53,41 +54,44 @@ class ParentConnector(
     }
 
     private fun connect(ip: String) {
-        onStatus("Подключаемся к $ip…")
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress(ip, LocalPorts.SIGNAL), 2_700)
-            socket.tcpNoDelay = true
-            socket.soTimeout = 5_000
-            val pipe = SignalPipe(socket)
-            activePipe = pipe
+        var connected = false
+        try {
+            onStatus("Подключаемся к $ip…")
+            Socket().use { socket ->
+                if (localBindIp != null) socket.bind(InetSocketAddress(localBindIp, 0))
+                socket.connect(InetSocketAddress(ip, LocalPorts.SIGNAL), 2_700)
+                socket.tcpNoDelay = true
+                socket.soTimeout = 5_000
+                val pipe = SignalPipe(socket)
+                activePipe = pipe
 
-            val clientNonce = PairingCode.newChallenge()
-            if (!pipe.send(WireMessage.Hello(clientNonce))) {
-                throw IOException("Не удалось отправить начальный запрос")
-            }
-            val serverNonce = (pipe.read() as? WireMessage.Challenge)?.value
-                ?: throw IOException("От камеры не получен ответ сопряжения")
-            pipe.enableSecure(pin, "$clientNonce.$serverNonce", isServer = false)
-            if (!pipe.send(WireMessage.Proof)) {
-                throw IOException("Не удалось передать подтверждение")
-            }
-
-            if (runCatching { pipe.read() }.getOrNull() != WireMessage.Accept) {
-                onStatus("Неверный код сопряжения или ошибка защищённого канала")
-                running.set(false)
-                return
-            }
-            socket.soTimeout = 14_000
-            onConnected(pipe, ip)
-            while (running.get()) {
-                val message = pipe.read() ?: break
-                if (message != WireMessage.Proof &&
-                    message !is WireMessage.Challenge &&
-                    message !is WireMessage.Hello
-                ) {
-                    onMessage(message)
+                val clientNonce = PairingCode.newChallenge()
+                if (!pipe.send(WireMessage.Hello(clientNonce)))
+                    throw IOException("Не удалось отправить начальный запрос")
+                val serverNonce = (pipe.read() as? WireMessage.Challenge)?.value
+                    ?: throw IOException("Камера не ответила на запрос подключения")
+                pipe.enableSecure(pin, "$clientNonce.$serverNonce", isServer = false)
+                if (!pipe.send(WireMessage.Proof))
+                    throw IOException("Не удалось подтвердить соединение")
+                if (runCatching { pipe.read() }.getOrNull() != WireMessage.Accept) {
+                    onStatus("Код подключения не подошёл")
+                    onPairingFailed()
+                    running.set(false)
+                    return
+                }
+                socket.soTimeout = 14_000
+                connected = true
+                onConnected(pipe, ip)
+                while (running.get()) {
+                    val message = pipe.read() ?: break
+                    if (message != WireMessage.Proof &&
+                        message !is WireMessage.Challenge &&
+                        message !is WireMessage.Hello
+                    ) onMessage(message)
                 }
             }
+        } finally {
+            if (connected) onDisconnected()
         }
     }
 

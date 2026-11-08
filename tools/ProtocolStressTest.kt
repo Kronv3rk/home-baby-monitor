@@ -17,6 +17,8 @@ fun main() {
         }
         check(WireProtocol.decode(WireProtocol.encode(message)) == message)
     }
+    val emptyMid = WireMessage.Ice("", 0, "candidate:1 1 udp 123 192.168.1.2 4000 typ host")
+    check(WireProtocol.decode(WireProtocol.encode(emptyMid)) == emptyMid)
     check(WireProtocol.decode("OFFER " + "a".repeat(WireProtocol.MAX_LINE)) == null)
     check(WireProtocol.decode("ICE not-base64 0 Zg") == null)
     ServerSocket(0).use { server ->

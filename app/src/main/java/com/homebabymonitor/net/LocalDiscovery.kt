@@ -5,22 +5,41 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetSocketAddress
+import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
+
+internal fun isCameraBeacon(message: String, sourceIp: String): Boolean =
+    message == LocalPorts.BEACON && LocalAddress.isPrivateIpv4(sourceIp)
 
 fun discoverBaby(timeoutMillis: Int = 2400): String? {
+    if (timeoutMillis <= 0) return null
     val socket = DatagramSocket(null)
-    return try {
+    try {
         socket.reuseAddress = true
         socket.bind(InetSocketAddress(LocalPorts.DISCOVERY))
-        socket.soTimeout = timeoutMillis
-        val bytes = ByteArray(96)
-        val packet = DatagramPacket(bytes, bytes.size)
-        socket.receive(packet)
-        val message = String(packet.data, 0, packet.length, StandardCharsets.US_ASCII)
-        val sender = packet.address
-        if (message == LocalPorts.BEACON && sender is Inet4Address &&
-            LocalAddress.isPrivateIpv4(sender.hostAddress.orEmpty())
-        ) sender.hostAddress else null
-    } catch (_: Exception) { null }
-    finally { socket.close() }
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis.toLong())
+        while (true) {
+            val remaining = deadline - System.nanoTime()
+            if (remaining <= 0) return null
+            socket.soTimeout = TimeUnit.NANOSECONDS.toMillis(remaining).coerceAtLeast(1).toInt()
+            val packet = DatagramPacket(ByteArray(96), 96)
+            try {
+                socket.receive(packet)
+            } catch (_: SocketTimeoutException) {
+                return null
+            }
+            val sender = packet.address
+            if (sender is Inet4Address &&
+                isCameraBeacon(
+                    String(packet.data, packet.offset, packet.length, StandardCharsets.US_ASCII),
+                    sender.hostAddress.orEmpty()
+                )
+            ) return sender.hostAddress
+        }
+    } catch (_: Exception) {
+        return null
+    } finally {
+        socket.close()
+    }
 }
