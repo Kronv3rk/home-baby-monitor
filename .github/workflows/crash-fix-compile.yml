@@ -1,0 +1,33 @@
+name: Crash-fix Kotlin and release compilation
+on:
+  push:
+    branches: [fix/android-startup-crash]
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
+          "$SDKMANAGER" --install 'platforms;android-36' 'build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Test and build minified release
+        run: |
+          bash tools/verify-jvm.sh
+          gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crash-fix-unsigned-release
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
