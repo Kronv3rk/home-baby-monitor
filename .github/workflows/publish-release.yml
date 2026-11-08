@@ -44,12 +44,25 @@ jobs:
           test -n "$VERSION"
           mkdir -p distribution
           APK="distribution/HomeBabyMonitor-v${VERSION}-release.apk"
-          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -P 16 -f 4 \
-            app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          # AGP has already aligned the unsigned APK. Preserve native lib offsets.
+          python3 - <<'PY'
+          import struct, zipfile
+          path = "app/build/outputs/apk/release/app-release-unsigned.apk"
+          with zipfile.ZipFile(path) as archive, open(path, "rb") as handle:
+              for item in archive.infolist():
+                  handle.seek(item.header_offset)
+                  header = struct.unpack("<IHHHHHIIIHH", handle.read(30))
+                  offset = item.header_offset + 30 + header[-2] + header[-1]
+                  if item.compress_type == zipfile.ZIP_STORED:
+                      assert offset % 4 == 0, item.filename
+                      if item.filename.endswith(".so"):
+                          assert offset % 16384 == 0, item.filename
+          PY
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
+            --alignment-preserved true \
             --ks "$KEYFILE" --ks-type PKCS12 --ks-key-alias home-baby-monitor \
             --ks-pass env:HBM_RELEASE_KEYSTORE_PASSWORD \
-            --out "$APK" "$RUNNER_TEMP/aligned.apk"
+            --out "$APK" app/build/outputs/apk/release/app-release-unsigned.apk
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/signature.txt"
           EXPECTED="f0fcd91e6307440ec04200480fb3f48491627e4fd3f70fa93069037274c43a9c"
           ACTUAL="$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' "$RUNNER_TEMP/signature.txt" | tr 'A-F' 'a-f')"
