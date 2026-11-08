@@ -181,6 +181,20 @@ class MainActivity : ComponentActivity() {
                     talk = { on -> sendCommand(MonitorService.ACTION_TALK, on) },
                     night = { on -> sendCommand(MonitorService.ACTION_NIGHT, on) },
                     torch = { on -> sendCommand(MonitorService.ACTION_TORCH, on) },
+                    cameraMic = { enabled -> sendCommand(MonitorService.ACTION_CAMERA_MIC, enabled) },
+                    speaker = { enabled -> sendCommand(MonitorService.ACTION_SPEAKER, enabled) },
+                    playbackVolume = { volume ->
+                        startService(Intent(this, MonitorService::class.java).apply {
+                            action = MonitorService.ACTION_PLAYBACK_VOLUME
+                            putExtra(MonitorService.EXTRA_VOLUME, volume)
+                        })
+                    },
+                    musicVolume = { volume ->
+                        startService(Intent(this, MonitorService::class.java).apply {
+                            action = MonitorService.ACTION_MUSIC_VOLUME
+                            putExtra(MonitorService.EXTRA_VOLUME, volume)
+                        })
+                    },
                     quality = { profile ->
                         startService(Intent(this, MonitorService::class.java).apply {
                             action = MonitorService.ACTION_QUALITY
