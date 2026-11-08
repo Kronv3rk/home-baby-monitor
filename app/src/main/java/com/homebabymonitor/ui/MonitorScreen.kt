@@ -328,9 +328,10 @@ private fun ParentMonitorScreen(
                 label = { Text("Фонарик") }, leadingIcon = { Icon(Icons.Default.FlashlightOn, null, Modifier.size(16.dp)) })
         }
         Text("Нажмите и удерживайте для разговора", color = muted, fontSize = 12.sp)
+        val isTalking by rememberUpdatedState(state.talking)
         Surface(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .pointerInput(state.connected, state.talking) { detectTapGestures(onPress = {
-                if (state.connected && !state.talking) {
+            .pointerInput(state.connected) { detectTapGestures(onPress = {
+                if (state.connected && !isTalking) {
                     talk(true)
                     try { tryAwaitRelease() } finally { talk(false) }
                 }
