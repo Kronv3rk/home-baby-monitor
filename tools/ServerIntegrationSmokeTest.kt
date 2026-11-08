@@ -127,7 +127,7 @@ fun main() {
             val intruderConnected = CountDownLatch(1)
             val intruder = ParentConnector("127.0.0.1", code,
                 { _, _ -> intruderConnected.countDown() }, {}, {}, {},
-                localBindIp = "127.0.0.2")
+                localBindIp = "127.0.0.3")
             intruder.start()
             try {
                 check(!intruderConnected.await(1500, TimeUnit.MILLISECONDS)) {
