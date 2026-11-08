@@ -257,7 +257,11 @@ class MonitorService : Service() {
                     MonitorBus.mutate { it.copy(error = "Код подключения не подошёл") }
                     stopSelf()
                 },
-                localBindIp = wifiIp
+                localBindIp = wifiIp,
+                onBusy = {
+                    MonitorBus.mutate { it.copy(error = "Камера уже подключена к другому телефону") }
+                    stopSelf()
+                }
             ).also { it.start() }
         }
         ticker = Executors.newSingleThreadScheduledExecutor().also { scheduler ->

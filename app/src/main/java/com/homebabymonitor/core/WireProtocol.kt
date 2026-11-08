@@ -11,6 +11,7 @@ sealed class WireMessage {
     data class Challenge(val value: String) : WireMessage()
     data object Proof : WireMessage()
     data object Accept : WireMessage()
+    data object Busy : WireMessage()
     data object Reject : WireMessage()
     data object Ping : WireMessage()
     data class Offer(val sdp: String) : WireMessage()
@@ -35,6 +36,7 @@ object WireProtocol {
         is WireMessage.Challenge -> "CHALLENGE ${message.value}"
         WireMessage.Proof -> "AUTH"
         WireMessage.Accept -> "OK"
+        WireMessage.Busy -> "BUSY"
         WireMessage.Reject -> "NO"
         WireMessage.Ping -> "PING"
         is WireMessage.Offer -> "OFFER ${b64(message.sdp)}"
@@ -51,6 +53,7 @@ object WireProtocol {
                 parts.size == 2 && parts[0] == "CHALLENGE" && PairingCode.validChallenge(parts[1]) -> WireMessage.Challenge(parts[1])
                 parts.size == 1 && line == "AUTH" -> WireMessage.Proof
                 parts.size == 1 && line == "OK" -> WireMessage.Accept
+                parts.size == 1 && line == "BUSY" -> WireMessage.Busy
                 parts.size == 1 && line == "NO" -> WireMessage.Reject
                 parts.size == 1 && line == "PING" -> WireMessage.Ping
                 parts.size == 2 && parts[0] == "OFFER" -> WireMessage.Offer(unb64(parts[1]))

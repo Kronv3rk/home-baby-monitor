@@ -125,12 +125,17 @@ fun main() {
         try {
             check(firstConnected.await(3, TimeUnit.SECONDS))
             val intruderConnected = CountDownLatch(1)
+            val intruderRejectedAsBusy = CountDownLatch(1)
             val intruder = ParentConnector("127.0.0.1", code,
                 { _, _ -> intruderConnected.countDown() }, {}, {}, {},
-                localBindIp = "127.0.0.3")
+                localBindIp = "127.0.0.3",
+                onBusy = { intruderRejectedAsBusy.countDown() })
             intruder.start()
             try {
-                check(!intruderConnected.await(1500, TimeUnit.MILLISECONDS)) {
+                check(intruderRejectedAsBusy.await(2000, TimeUnit.MILLISECONDS)) {
+                    "New parent was not told the camera was already paired"
+                }
+                check(!intruderConnected.await(500, TimeUnit.MILLISECONDS)) {
                     "A second LAN address replaced an active parent with a reused pairing code"
                 }
                 check(firstLost.get() == 0) { "Existing parent was kicked off by another address" }

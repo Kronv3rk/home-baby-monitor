@@ -43,7 +43,7 @@ class CoreTest {
 
     @Test fun roundTripSignalling() {
         for (message in listOf(
-            WireMessage.Challenge(PairingCode.newChallenge()), WireMessage.Proof, WireMessage.Accept, WireMessage.Reject, WireMessage.Ping,
+            WireMessage.Challenge(PairingCode.newChallenge()), WireMessage.Proof, WireMessage.Accept, WireMessage.Busy, WireMessage.Reject, WireMessage.Ping,
             WireMessage.Offer("v=0\r\na=group:BUNDLE 0\r\n"),
             WireMessage.Answer("v=0\r\n"),
             WireMessage.Ice("0", 0, "candidate:1 1 udp 123 192.168.1.2 5000 typ host")

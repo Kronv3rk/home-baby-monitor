@@ -15,7 +15,8 @@ class ParentConnector(
     private val onDisconnected: () -> Unit,
     private val onStatus: (String) -> Unit,
     private val onPairingFailed: () -> Unit = {},
-    private val localBindIp: String? = null
+    private val localBindIp: String? = null,
+    private val onBusy: () -> Unit = {}
 ) {
     private val running = AtomicBoolean(false)
     @Volatile private var activePipe: SignalPipe? = null
@@ -73,11 +74,20 @@ class ParentConnector(
                 pipe.enableSecure(pin, "$clientNonce.$serverNonce", isServer = false)
                 if (!pipe.send(WireMessage.Proof))
                     throw IOException("Не удалось подтвердить соединение")
-                if (runCatching { pipe.read() }.getOrNull() != WireMessage.Accept) {
-                    onStatus("Код подключения не подошёл")
-                    onPairingFailed()
-                    running.set(false)
-                    return
+                when (runCatching { pipe.read() }.getOrNull()) {
+                    WireMessage.Accept -> Unit
+                    WireMessage.Busy -> {
+                        onStatus("Камера уже подключена к другому телефону")
+                        onBusy()
+                        running.set(false)
+                        return
+                    }
+                    else -> {
+                        onStatus("Код подключения не подошёл")
+                        onPairingFailed()
+                        running.set(false)
+                        return
+                    }
                 }
                 socket.soTimeout = 14_000
                 connected = true

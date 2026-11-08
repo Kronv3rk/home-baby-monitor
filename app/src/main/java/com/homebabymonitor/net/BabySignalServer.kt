@@ -39,6 +39,7 @@ class BabySignalServer(
     }
     @Volatile private var server: ServerSocket? = null
     @Volatile private var activePipe: SignalPipe? = null
+    private var activeClientAddress: String? = null
 
     private fun limiterFor(socket: Socket): PinRateLimiter {
         val address = socket.inetAddress.hostAddress.orEmpty()
@@ -110,18 +111,25 @@ class BabySignalServer(
                 limiter.failed(SystemClock.elapsedRealtime())
                 return
             }
-            if (!pipe.send(WireMessage.Accept)) return
-
-            authorized = true
             limiter.succeeded()
-            synchronized(sessionLock) {
-                if (!running.get()) return
-                val previous = activePipe
-                activePipe = pipe
-                previous?.close()
+            val clientAddress = socket.inetAddress.hostAddress.orEmpty()
+            val accepted = synchronized(sessionLock) {
+                if (!running.get()) false
+                else if (activePipe != null && activeClientAddress != clientAddress) {
+                    pipe.send(WireMessage.Busy)
+                    false
+                } else if (pipe.send(WireMessage.Accept)) {
+                    val previous = activePipe
+                    activePipe = pipe
+                    activeClientAddress = clientAddress
+                    authorized = true
+                    previous?.close()
+                    true
+                } else false
             }
+            if (!accepted) return
             socket.soTimeout = 14_000
-            onConnected(pipe, socket.inetAddress.hostAddress.orEmpty())
+            onConnected(pipe, clientAddress)
             while (running.get()) {
                 val message = pipe.read() ?: break
                 if (message != WireMessage.Proof &&
@@ -137,6 +145,7 @@ class BabySignalServer(
                 val wasActive = synchronized(sessionLock) {
                     if (activePipe === pipe) {
                         activePipe = null
+                        activeClientAddress = null
                         true
                     } else false
                 }
@@ -148,7 +157,11 @@ class BabySignalServer(
     fun stop() {
         running.set(false)
         server?.let { runCatching { it.close() } }
-        synchronized(sessionLock) { activePipe?.close(); activePipe = null }
+        synchronized(sessionLock) {
+            activePipe?.close()
+            activePipe = null
+            activeClientAddress = null
+        }
         openSockets.forEach { runCatching { it.close() } }
         workers.shutdownNow()
     }
