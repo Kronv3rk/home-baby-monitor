@@ -8,6 +8,17 @@ import java.net.Socket
 import kotlin.concurrent.thread
 
 class CoreTest {
+    @Test fun failedNativeInitializationMayBeRetried() {
+        val gate = InitializationGate()
+        var attempts = 0
+        assertThrows(IllegalStateException::class.java) {
+            gate.ensure { attempts++; throw IllegalStateException("native library unavailable") }
+        }
+        gate.ensure { attempts++ }
+        gate.ensure { attempts++ }
+        assertEquals(2, attempts)
+    }
+
     @Test fun nativeCrashCanBeIdentifiedInSharedReport() {
         assertEquals("Сбой нативного компонента", CrashReportFormatter.label(5))
         assertEquals("Необработанная ошибка Android", CrashReportFormatter.label(4))

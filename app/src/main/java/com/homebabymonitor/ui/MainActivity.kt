@@ -92,7 +92,13 @@ class MainActivity : ComponentActivity() {
                 putExtra(MonitorService.EXTRA_IP, ip)
                 putExtra(MonitorService.EXTRA_PIN, pin)
             }
-            ContextCompat.startForegroundService(this, intent)
+            try {
+                ContextCompat.startForegroundService(this, intent)
+            } catch (error: IllegalStateException) {
+                MonitorBus.mutate { it.copy(error = "Android запретил запуск камеры в фоне. Откройте приложение и повторите попытку.") }
+            } catch (error: SecurityException) {
+                MonitorBus.mutate { it.copy(error = "Android не разрешил запуск камеры или микрофона. Проверьте разрешения.") }
+            }
         }
         val missing = request.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
         pendingStart = action
@@ -124,10 +130,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sendCommand(action: String, value: Boolean? = null) {
-        startService(Intent(this, MonitorService::class.java).apply {
-            this.action = action
-            if (value != null) putExtra(MonitorService.EXTRA_VALUE, value)
-        })
+        try {
+            startService(Intent(this, MonitorService::class.java).apply {
+                this.action = action
+                if (value != null) putExtra(MonitorService.EXTRA_VALUE, value)
+            })
+        } catch (error: IllegalStateException) {
+            MonitorBus.mutate { it.copy(error = "Android ограничил фоновую работу приложения.") }
+        } catch (error: SecurityException) {
+            MonitorBus.mutate { it.copy(error = "Недостаточно разрешений для управления камерой.") }
+        }
     }
 
     override fun onStop() {
