@@ -177,6 +177,25 @@ class CoreTest {
         assertEquals(60, VideoQuality.QHD_60.fps)
     }
 
+    @Test fun fullHd30KeepsNativeResolutionRatherThanCroppingForHigherFps() {
+        val formats = listOf(CaptureOption(1280, 720, 60), CaptureOption(1920, 1080, 30))
+        assertEquals(CaptureOption(1920, 1080, 30), VideoQuality.FHD_30.chooseFormat(formats))
+        assertEquals(CaptureOption(1280, 720, 30), VideoQuality.HD.chooseFormat(formats))
+    }
+
+    @Test fun sensorFrameRateIsCappedToRequestedProfile() {
+        assertEquals(CaptureOption(1920, 1080, 30),
+            VideoQuality.FHD_30.chooseFormat(listOf(CaptureOption(1920, 1080, 60))))
+    }
+
+    @Test fun newSleepSoundsRoundTripInSecureControlMessages() {
+        for (sound in listOf(SleepSound.OCEAN, SleepSound.WIND, SleepSound.WHITE_NOISE,
+            SleepSound.SOFT_NOISE, SleepSound.HEARTBEAT, SleepSound.LULLABY_2, SleepSound.BELLS)) {
+            val request = SleepCommand(sound, 30, 25)
+            assertEquals(request, SleepCommand.parse(request.encode()))
+        }
+    }
+
     @Test fun musicCommandRejectsInvalidValues() {
         val request = SleepCommand(SleepSound.MUSIC_BOX, 30, 20)
         assertEquals(request, SleepCommand.parse(request.encode()))
