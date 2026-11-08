@@ -168,24 +168,36 @@ private fun WelcomeScreen(startBaby: () -> Unit, startParent: (String, String) -
 
 @Composable
 private fun BabyCameraScreen(state: MonitorState, stop: () -> Unit) {
+    var revealPairing by remember { mutableStateOf(false) }
+    LaunchedEffect(state.connected) { if (state.connected) revealPairing = false }
+    val showPairing = com.homebabymonitor.core.PairingVisibility.show(state.connected, revealPairing)
     StatusHeader("Камера", state)
     val qrContent = remember(state.localIp, state.pairingPin) {
         runCatching { PairingLink.create(state.localIp, state.pairingPin) }.getOrNull()
     }
     Panel {
         Text("Подключить второй телефон", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-        if (qrContent != null) {
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                PairingQr(qrContent)
+        if (showPairing) {
+            if (qrContent != null) {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    PairingQr(qrContent)
+                }
+                Text("Сканируйте QR-код со второго телефона.", color = muted, fontSize = 13.sp)
+            } else {
+                Text("QR-код появится при подключении к Wi-Fi.", color = muted, fontSize = 13.sp)
             }
-            Text("Откройте «Сканировать QR-код» на втором телефоне.", color = muted, fontSize = 13.sp)
+            HorizontalDivider(color = faint)
+            Text("Код для ручного подключения", color = muted, fontSize = 12.sp)
+            Text(state.pairingPin, color = Color.White, fontSize = 20.sp, letterSpacing = 1.sp,
+                lineHeight = 26.sp, fontWeight = FontWeight.SemiBold)
         } else {
-            Text("QR-код появится после подключения к Wi-Fi.", color = muted, fontSize = 13.sp)
+            Text("Код скрыт, пока идёт трансляция.", color = muted, fontSize = 13.sp)
         }
-        HorizontalDivider(color = faint)
-        Text("Код для ручного подключения", color = muted, fontSize = 12.sp)
-        Text(state.pairingPin, color = Color.White, fontSize = 20.sp, letterSpacing = 1.sp,
-            lineHeight = 26.sp, fontWeight = FontWeight.SemiBold)
+        if (state.connected) {
+            TextButton(onClick = { revealPairing = !revealPairing }) {
+                Text(if (showPairing) "Скрыть код" else "Показать код")
+            }
+        }
         Detail("IP-адрес", state.localIp)
     }
     Panel {

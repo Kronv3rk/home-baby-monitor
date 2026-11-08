@@ -137,6 +137,12 @@ class CoreTest {
         assertNull(WifiEndpointSelector.choose(listOf(WifiCandidate(true, true, listOf("8.8.8.8")))))
     }
 
+    @Test fun hidePairingSecretWhenCameraIsConnected() {
+        assertTrue(PairingVisibility.show(false, false))
+        assertFalse(PairingVisibility.show(true, false))
+        assertTrue(PairingVisibility.show(true, true))
+    }
+
     @Test fun qrPairingAcceptsOnlyPrivateAddress() {
         val secret = PairingCode.generate()
         val link = PairingLink.create("192.168.1.25", secret)
