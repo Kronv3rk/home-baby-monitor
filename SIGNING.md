@@ -1,12 +1,12 @@
 # Подпись release APK
 
-Первый постоянный релиз: **0.4.2** (`versionCode = 8`, `applicationId = com.homebabymonitor`).
+Постоянная подпись применяется с **0.4.2** (`versionCode = 8`, `applicationId = com.homebabymonitor`).
 
 Отпечаток сертификата подписи SHA-256:
 
 `f0fcd91e6307440ec04200480fb3f48491627e4fd3f70fa93069037274c43a9c`
 
-Последующие APK должны иметь **точно такой же отпечаток**, иначе Android не установит обновление поверх ранее установленного релиза. Первая release-сборка подписана локально; автоматическая публикация подписанных APK из GitHub Actions пока не настроена, так как приватный ключ не хранится в публичном репозитории.
+Последующие APK должны иметь **точно такой же отпечаток**, иначе Android не установит обновление поверх ранее установленного релиза. Версия 0.4.3 подписана тем же ключом и проверена на совпадение сертификата с 0.4.2; автоматическая публикация подписанных APK из GitHub Actions пока не настроена, так как приватный ключ не хранится в публичном репозитории.
 
 Для обновления поверх предыдущей версии Android требует неизменные applicationId и сертификат подписи, а также увеличение versionCode. В проекте используется applicationId `com.homebabymonitor`.
 
@@ -15,8 +15,8 @@
 ## Локальная подпись
 
 1. Соберите неподписанный APK: `gradle :app:assembleRelease`.
-2. Выровняйте APK: `zipalign -p -f 4 app-release-unsigned.apk aligned.apk`.
-3. Подпишите одним и тем же ключом: `apksigner sign --ks /path/to/private-release.jks --ks-key-alias home-baby-monitor --out HomeBabyMonitor-release.apk aligned.apk`.
+2. Выровняйте APK, включая нативные библиотеки: `zipalign -P 16 -f 4 app-release-unsigned.apk aligned.apk`.
+3. Подпишите одним и тем же ключом: `apksigner sign --alignment-preserved true --ks /path/to/private-release.p12 --ks-type PKCS12 --ks-key-alias home-baby-monitor --out HomeBabyMonitor-release.apk aligned.apk`.
 4. Проверьте: `apksigner verify --verbose --print-certs HomeBabyMonitor-release.apk`.
 
 Выполняйте подписывание локально. В CI формируется только неподписанный APK; автоматически публиковать release с новым ключом при каждом запуске **запрещено**.
@@ -24,3 +24,10 @@
 ## Первое обновление с debug
 
 Debug-сборки и подписанные release-сборки имеют разные сертификаты. Перед установкой первой release-сборки удалите ранее установленную debug-версию. Последующие release-сборки, подписанные **тем же ключом**, должны устанавливаться как обновление без удаления данных.
+
+## Последний подписанный APK
+
+- Версия: **0.4.3** (`versionCode = 9`).
+- Подписан тем же сертификатом, что и 0.4.2.
+- SHA-256: `e3bbf14be3ab1bdd639e87a0d3e1bc5fe365053b25fcde6e1c39241f431624f9`.
+- Выпуск подписанных APK на GitHub Releases не автоматизирован: в CI нет приватного ключа. Не подменять подписанный APK неподписанным CI-артефактом.
