@@ -381,7 +381,7 @@ class MonitorService : Service() {
         engine?.setTalking(false)
         engine?.closePeer()
         MonitorBus.mutate {
-            it.copy(connected = false, talking = false, networkVideo = "",
+            it.copy(connected = false, talking = false, networkVideo = "", videoTiming = "",
                 status = "Связь прервана. Подключаемся заново")
         }
     }
@@ -562,7 +562,8 @@ class MonitorService : Service() {
                 }
                 engine?.pollVideoStats(
                     onResult = { stats -> MonitorBus.mutate { it.copy(networkVideo = stats) } },
-                    onFeedback = { health -> engine?.sendControl(health.encode()) }
+                    onFeedback = { health -> engine?.sendControl(health.encode()) },
+                    onTiming = { timing -> MonitorBus.mutate { it.copy(videoTiming = timing) } }
                 )
                 val problem = watchdog.problem(SystemClock.elapsedRealtime())
                 if (problem != null && !alarmedForOutage) {
