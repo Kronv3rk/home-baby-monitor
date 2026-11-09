@@ -13,6 +13,8 @@ import com.homebabymonitor.core.VideoEndpointLimit
 import com.homebabymonitor.core.ReceptionHealth
 import com.homebabymonitor.core.VideoCodecBudgets
 import com.homebabymonitor.core.VideoCodecPreference
+import com.homebabymonitor.core.PlaybackTimingSampler
+import com.homebabymonitor.core.PlaybackTimingCounters
 import com.homebabymonitor.core.InitializationGate
 import com.homebabymonitor.core.WireMessage
 import org.webrtc.*
@@ -67,6 +69,7 @@ class RtcEngine(
     private var previousLostPackets = -1L
     private var previousDecodedFrames = -1L
     private var previousDroppedFrames = -1L
+    private val timingSampler = PlaybackTimingSampler()
     @Volatile private var cameraMicEnabled = true
     @Volatile private var playbackEnabled = true
     @Volatile private var playbackVolume = 100
@@ -309,7 +312,11 @@ class RtcEngine(
     }
 
     /** Report actual received video bandwidth; ICE and encoder control remain adaptive. */
-    fun pollVideoStats(onResult: (String) -> Unit, onFeedback: (ReceptionHealth) -> Unit = {}) {
+    fun pollVideoStats(
+        onResult: (String) -> Unit,
+        onFeedback: (ReceptionHealth) -> Unit = {},
+        onTiming: (String) -> Unit = {}
+    ) {
         if (role != Role.PARENT || closing.get()) return
         val connection = peer ?: return
         val generation = peerGeneration
@@ -326,6 +333,20 @@ class RtcEngine(
                     val packetsReceived = (video.members["packetsReceived"] as? Number)?.toLong()
                     val decoded = (video.members["framesDecoded"] as? Number)?.toLong()
                     val dropped = (video.members["framesDropped"] as? Number)?.toLong()
+                    val jitterSum = (video.members["jitterBufferDelay"] as? Number)?.toDouble()
+                    val bufferCount = (video.members["jitterBufferEmittedCount"] as? Number)?.toLong()
+                    val decoderSum = (video.members["totalDecodeTime"] as? Number)?.toDouble()
+                    val freezeCount = (video.members["freezeCount"] as? Number)?.toLong()
+                    if (jitterSum != null && bufferCount != null && decoderSum != null &&
+                        decoded != null && freezeCount != null) {
+                        timingSampler.record(PlaybackTimingCounters(jitterSum, bufferCount,
+                            decoderSum, decoded, freezeCount))?.let { delta ->
+                            val line = String.format(java.util.Locale.US,
+                                "Буфер %.0f мс · декодирование %.0f мс",
+                                delta.bufferMs, delta.decodeMs)
+                            onTiming(line + if (delta.newFreezes > 0) " · замирания +${delta.newFreezes}" else "")
+                        }
+                    }
                     val codecId = video.members["codecId"] as? String
                     val mime = codecId?.let { report.statsMap[it]?.members?.get("mimeType") as? String }
                         ?.substringAfter('/', "")
@@ -612,6 +633,7 @@ class RtcEngine(
         previousDecodedFrames = -1L
         previousDroppedFrames = -1L
         measuredReceiveFps = 0.0
+        timingSampler.reset()
         if (role == Role.BABY) {
             receiverLimit = VideoEndpointLimit.UNKNOWN
             receiverCodecBudgets = VideoCodecBudgets(emptyMap())
@@ -621,6 +643,10 @@ class RtcEngine(
         try { peer?.close() } catch (_: Exception) {}
         try { peer?.dispose() } catch (_: Exception) {}
         peer = null
+        // A reconnected monitor may support different codecs; restore the safe capture mode.
+        if (role == Role.BABY && capturer != null) {
+            applyCameraQuality(initialCameraQuality())
+        }
     }
 
     @Synchronized fun stop() {
