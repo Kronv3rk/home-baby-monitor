@@ -45,14 +45,15 @@ data class VideoCodecBudgets(val rates: Map<String, Long>) {
 object VideoCodecPreference {
     private val codecOrder = VideoCodecBudgets.KNOWN.withIndex().associate { it.value to it.index }
 
-    fun ordered(names: List<String>, hardware: VideoCodecBudgets): List<String> {
-        return names.withIndex().sortedWith(
-            compareBy<IndexedValue<String>> {
-                val codec = it.value.uppercase()
-                if (codec !in codecOrder) 1000
-                else if (codec in hardware.rates) codecOrder.getValue(codec)
-                else 100 + codecOrder.getValue(codec)
-            }.thenBy { it.index }
-        ).map { it.value }
+    fun rank(codecName: String, hardware: VideoCodecBudgets): Int {
+        val codec = codecName.uppercase()
+        if (codec !in codecOrder) return 1000
+        return if (codec in hardware.rates) codecOrder.getValue(codec)
+        else 100 + codecOrder.getValue(codec)
     }
+
+    fun ordered(names: List<String>, hardware: VideoCodecBudgets): List<String> =
+        names.withIndex().sortedWith(
+            compareBy<IndexedValue<String>> { rank(it.value, hardware) }.thenBy { it.index }
+        ).map { it.value }
 }
