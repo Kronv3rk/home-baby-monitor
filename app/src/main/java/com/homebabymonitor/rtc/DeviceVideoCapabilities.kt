@@ -37,7 +37,17 @@ internal object DeviceVideoCapabilities {
                     for (profile in AdaptiveVideoPolicy.ordered) {
                         if (profile.width <= 0 || profile.height <= 0) continue
                         val works = try {
-                            video.areSizeAndRateSupported(profile.width, profile.height, profile.fps.toDouble())
+                            val dimensions = video.areSizeAndRateSupported(
+                                profile.width, profile.height, profile.fps.toDouble()
+                            )
+                            val guaranteed = if (Build.VERSION.SDK_INT >= 29) {
+                                val points = video.supportedPerformancePoints
+                                points.isNullOrEmpty() || points.any { published ->
+                                    published.covers(MediaCodecInfo.VideoCapabilities.PerformancePoint(
+                                        profile.width, profile.height, profile.fps))
+                                }
+                            } else true
+                            dimensions && guaranteed
                         } catch (_: Exception) { false }
                         if (works) fastest = maxOf(
                             fastest, profile.width.toLong() * profile.height * profile.fps
