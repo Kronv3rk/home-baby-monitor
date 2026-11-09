@@ -232,7 +232,7 @@ private fun BabyCameraScreen(
 
     Panel {
         Text("Качество видеопотока", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-        Text("Настройки применяются на телефоне камеры и сохраняются после перезапуска.",
+        Text("«Автоматически» повышает качество на стабильном Wi-Fi и снижает его при задержках, потерях кадров и перегреве.",
             color = muted, fontSize = 12.sp, lineHeight = 18.sp)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             VideoQuality.entries.forEach { mode ->
@@ -240,8 +240,11 @@ private fun BabyCameraScreen(
                     onClick = { quality(mode) }, label = { Text(mode.title) })
             }
         }
+        Detail("Выбранный режим", VideoQuality.fromWire(state.videoQuality)?.title ?: "—")
+        Detail("Активный режим", VideoQuality.fromWire(state.actualVideoQuality)?.title ?: "Определяется…")
         Detail("Фактическая съёмка", state.actualVideo.ifEmpty { "Запускается…" })
-        Text("Для Full HD и 2K нужна подходящая камера, аппаратный кодировщик и устойчивый Wi-Fi 5 ГГц. Частота 60 к/с не гарантируется.",
+        Detail("Аппаратные кодеки", state.codecSupport.ifBlank { "Проверяются…" })
+        Text("4K / 60 к/с доступно только при поддержке камерой и аппаратными кодировщиками обоих телефонов. На слабой сети приоритет у стабильного звука и небольшой задержки.",
             color = muted, fontSize = 12.sp, lineHeight = 18.sp)
     }
 
@@ -263,7 +266,7 @@ private fun BabyCameraScreen(
     }
     Panel {
         Text("Состояние камеры", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-        Detail("Режим", VideoQuality.fromWire(state.videoQuality)?.title ?: "—")
+        Detail("Режим", VideoQuality.fromWire(state.actualVideoQuality)?.title ?: "—")
         Detail("Ночной режим", if (state.nightMode) "Включён" else "Выключен")
         Detail("Звуки для сна", SleepSound.fromWire(state.musicSound)?.title ?: "Выключены")
     }
@@ -307,10 +310,12 @@ private fun ParentMonitorScreen(
 
     Panel {
         Text("Видеопоток", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-        Detail("Профиль камеры", VideoQuality.fromWire(state.videoQuality)?.title ?: "—")
+        Detail("Настройка камеры", VideoQuality.fromWire(state.videoQuality)?.title ?: "—")
+        Detail("Активный режим", VideoQuality.fromWire(state.actualVideoQuality)?.title ?: "Измеряется…")
         Detail("Принимаемый поток", state.actualVideo.ifEmpty { "Нет кадров" })
-        Detail("Скорость передачи", state.networkVideo.ifEmpty { "Измеряется…" })
-        Text("Качество и частота кадров выбираются на телефоне камеры. Скорость зависит от Wi-Fi и кодировщика.",
+        Detail("Скорость / кодек / потери", state.networkVideo.ifEmpty { "Измеряется…" })
+        Detail("Кодеки монитора", state.codecSupport.ifBlank { "Не определены" })
+        Text("В автоматическом режиме камера учитывает возможности обоих устройств, полученные кадры, потери и задержку. Реальное качество может быть ниже выбранного режима.",
             color = muted, fontSize = 12.sp, lineHeight = 18.sp)
     }
 
