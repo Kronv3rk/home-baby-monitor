@@ -5,7 +5,15 @@ data class VideoEndpointLimit(val maxPixelsPerSecond: Long) {
     companion object {
         // No capability advertisement must never be interpreted as 4K support.
         val UNKNOWN = VideoEndpointLimit(1920L * 1080 * 30)
+
+        fun parse(wire: String): VideoEndpointLimit? {
+            if (!wire.startsWith("RX_CAPS:") || wire.length > 32) return null
+            val rate = wire.removePrefix("RX_CAPS:").toLongOrNull() ?: return null
+            return if (rate in (640L * 480 * 15)..(7680L * 4320 * 120))
+                VideoEndpointLimit(rate) else null
+        }
     }
+    fun encode(): String = "RX_CAPS:$maxPixelsPerSecond"
 }
 
 data class ReceptionHealth(
