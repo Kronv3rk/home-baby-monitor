@@ -238,6 +238,24 @@ class CoreTest {
         assertEquals(VideoQuality.FHD_30, AdaptiveVideoPolicy.limitManual(VideoQuality.UHD_60, allowed))
     }
 
+    @Test fun receiverCapabilityPayloadIsStrictlyBounded() {
+        val capability = VideoEndpointLimit(3840L * 2160 * 60)
+        assertEquals(capability, VideoEndpointLimit.parse(capability.encode()))
+        for (payload in listOf("RX_CAPS:-1", "RX_CAPS:0", "RX_CAPS:999999999999",
+            "RX_CAPS:abc", "RX_CAPS:100:extra")) {
+            assertNull(VideoEndpointLimit.parse(payload))
+        }
+    }
+
+    @Test fun noActualCameraModeMeansNoInventedFourK() {
+        val formats = listOf(CaptureOption(1920, 1080, 30))
+        val maxHardware = VideoEndpointLimit(3840L * 2160 * 60)
+        val options = AdaptiveVideoPolicy.supported(formats, maxHardware, maxHardware)
+        assertFalse(VideoQuality.UHD_60 in options)
+        assertFalse(VideoQuality.UHD_30 in options)
+        assertEquals(VideoQuality.FHD_30, AdaptiveVideoPolicy.safeInitial(options))
+    }
+
     @Test fun musicCommandRejectsInvalidValues() {
         val request = SleepCommand(SleepSound.MUSIC_BOX, 30, 20)
         assertEquals(request, SleepCommand.parse(request.encode()))
