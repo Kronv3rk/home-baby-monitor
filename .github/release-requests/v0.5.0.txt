@@ -1,0 +1,4 @@
+Release request: HomeBabyMonitor 0.5.0 signed Android pre-release.
+Merging after required CI checks triggers the protected release-signing workflow.
+Codec-aware WebRTC, AV1/H265 where the bundled library and hardware allow.
+No claim of validated camera-to-display latency or universal 4K60 support.
