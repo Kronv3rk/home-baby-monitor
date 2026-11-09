@@ -60,9 +60,7 @@ class AdaptiveVideoPolicy {
             profile.width.toLong() * profile.height * profile.fps <= sender.maxPixelsPerSecond &&
                 profile.width.toLong() * profile.height * profile.fps <= receiver.maxPixelsPerSecond &&
                 cameraFormats.any { format ->
-                    format.width >= profile.width && format.height >= profile.height && format.fps >= profile.fps &&
-                        kotlin.math.abs(format.width.toDouble() / format.height -
-                            profile.width.toDouble() / profile.height) < 0.05
+                    format.width == profile.width && format.height == profile.height && format.fps >= profile.fps
                 }
         }.ifEmpty { listOf(VideoQuality.ECONOMY) }
 
