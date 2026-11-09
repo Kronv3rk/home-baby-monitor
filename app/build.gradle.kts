@@ -11,8 +11,8 @@ android {
         applicationId = "com.homebabymonitor"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.4.8"
+        versionCode = 15
+        versionName = "0.4.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
