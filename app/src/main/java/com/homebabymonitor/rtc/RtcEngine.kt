@@ -8,6 +8,9 @@ import com.homebabymonitor.Role
 import com.homebabymonitor.core.AudioTrigger
 import com.homebabymonitor.core.VideoQuality
 import com.homebabymonitor.core.CaptureOption
+import com.homebabymonitor.core.AdaptiveVideoPolicy
+import com.homebabymonitor.core.VideoEndpointLimit
+import com.homebabymonitor.core.ReceptionHealth
 import com.homebabymonitor.core.InitializationGate
 import com.homebabymonitor.core.WireMessage
 import org.webrtc.*
@@ -45,8 +48,20 @@ class RtcEngine(
     private var cameraEnumerator: CameraEnumerator? = null
     private var cameraName: String? = null
     private var videoSender: RtpSender? = null
-    private var qualityProfile = initialQuality
-    private var currentCapture = CaptureOption(initialQuality.width, initialQuality.height, initialQuality.fps)
+    private var requestedQuality = initialQuality
+    private var qualityProfile = VideoQuality.FHD_30
+    private var currentCapture = CaptureOption(1280, 720, 30)
+    private var cameraFormats: List<CaptureOption> = emptyList()
+    private var hardwareLimit = VideoEndpointLimit.UNKNOWN
+    private var receiverLimit = VideoEndpointLimit.UNKNOWN
+    private var thermalSevere = false
+    private val adaptive = AdaptiveVideoPolicy()
+    private var supportedCodecNames = ""
+    @Volatile private var measuredReceiveFps = 0.0
+    private var previousReceivedPackets = -1L
+    private var previousLostPackets = -1L
+    private var previousDecodedFrames = -1L
+    private var previousDroppedFrames = -1L
     @Volatile private var cameraMicEnabled = true
     @Volatile private var playbackEnabled = true
     @Volatile private var playbackVolume = 100
@@ -70,6 +85,7 @@ class RtcEngine(
         val now = android.os.SystemClock.elapsedRealtime()
         if (now - lastReceivedReport >= 1500) {
             val fps = (receivedFrames * 1000L / (now - lastReceivedReport)).toInt()
+            measuredReceiveFps = receivedFrames * 1000.0 / (now - lastReceivedReport)
             receivedFrames = 0
             lastReceivedReport = now
             onControl("LOCAL_RECEIVED:${frame.buffer.width}×${frame.buffer.height} · ${fps} к/с")
@@ -106,10 +122,18 @@ class RtcEngine(
             }
             .createAudioDeviceModule()
         try {
+            val encoderFactory = DefaultVideoEncoderFactory(egl.eglBaseContext, true, true)
+            val decoderFactory = DefaultVideoDecoderFactory(egl.eglBaseContext)
+            val platformCodecs = if (role == Role.BABY)
+                encoderFactory.supportedCodecs.map { it.name }.toSet()
+                else decoderFactory.supportedCodecs.map { it.name }.toSet()
+            val capabilities = DeviceVideoCapabilities.probe(role == Role.BABY, platformCodecs)
+            hardwareLimit = capabilities.limit
+            supportedCodecNames = capabilities.codecs
             factory = PeerConnectionFactory.builder()
                 .setAudioDeviceModule(module)
-                .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl.eglBaseContext, true, true))
-                .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl.eglBaseContext))
+                .setVideoEncoderFactory(encoderFactory)
+                .setVideoDecoderFactory(decoderFactory)
                 .createPeerConnectionFactory()
         } finally {
             module.release()
@@ -120,6 +144,20 @@ class RtcEngine(
         if (role == Role.BABY) openCamera()
     }
 
+    fun localEndpointLimit(): VideoEndpointLimit = hardwareLimit
+    fun localCodecDescription(): String = supportedCodecNames
+
+    @Synchronized private fun eligibleProfiles(): List<VideoQuality> =
+        AdaptiveVideoPolicy.supported(cameraFormats,
+            if (thermalSevere) VideoEndpointLimit(1280L * 720 * 30) else hardwareLimit,
+            receiverLimit)
+
+    @Synchronized private fun initialCameraQuality(): VideoQuality {
+        val allowed = eligibleProfiles()
+        return if (requestedQuality == VideoQuality.AUTO) adaptive.reset(allowed, android.os.SystemClock.elapsedRealtime())
+            else AdaptiveVideoPolicy.limitManual(requestedQuality, allowed)
+    }
+
     private fun openCamera() {
         val cameraEnum: CameraEnumerator = if (Camera2Enumerator.isSupported(context)) Camera2Enumerator(context) else Camera1Enumerator(false)
         val back = cameraEnum.deviceNames.firstOrNull { cameraEnum.isBackFacing(it) }
@@ -127,6 +165,10 @@ class RtcEngine(
         if (choice == null) { onError("На телефоне не найдена камера"); return }
         cameraEnumerator = cameraEnum
         cameraName = choice
+        cameraFormats = cameraEnum.getSupportedFormats(choice).map {
+            val raw = it.framerate.max
+            CaptureOption(it.width, it.height, if (raw > 1000) raw / 1000 else raw)
+        }
         capturer = cameraEnum.createCapturer(choice, null)
         if (capturer == null) { onError("Не удалось открыть камеру"); return }
         videoSource = factory?.createVideoSource(false)
@@ -136,6 +178,7 @@ class RtcEngine(
         try {
             videoTrack = factory?.createVideoTrack("camera", videoSource)
             MonitorBus.setCameraVideoTrack(videoTrack)
+            qualityProfile = initialCameraQuality()
             currentCapture = chooseCapture(qualityProfile)
             capturer?.startCapture(currentCapture.width, currentCapture.height, currentCapture.fps)
         } catch (e: Exception) { onError("Ошибка запуска камеры: ${e.message}") }
@@ -231,7 +274,7 @@ class RtcEngine(
     }
 
     /** Report actual received video bandwidth; ICE and encoder control remain adaptive. */
-    fun pollVideoStats(onResult: (String) -> Unit) {
+    fun pollVideoStats(onResult: (String) -> Unit, onFeedback: (ReceptionHealth) -> Unit = {}) {
         if (role != Role.PARENT || closing.get()) return
         val connection = peer ?: return
         val generation = peerGeneration
@@ -244,16 +287,52 @@ class RtcEngine(
                 }
                 if (video != null) {
                     val bytes = (video.members["bytesReceived"] as? Number)?.toLong()
-                    val loss = (video.members["packetsLost"] as? Number)?.toLong()
+                    val packetsLost = (video.members["packetsLost"] as? Number)?.toLong()
+                    val packetsReceived = (video.members["packetsReceived"] as? Number)?.toLong()
+                    val decoded = (video.members["framesDecoded"] as? Number)?.toLong()
+                    val dropped = (video.members["framesDropped"] as? Number)?.toLong()
+                    val codecId = video.members["codecId"] as? String
+                    val mime = codecId?.let { report.statsMap[it]?.members?.get("mimeType") as? String }
+                        ?.substringAfter('/', "")
+                    val rtt = report.statsMap.values.firstOrNull { stat ->
+                        stat.type == "candidate-pair" && stat.members["state"] == "succeeded" &&
+                            stat.members["currentRoundTripTime"] is Number
+                    }?.members?.get("currentRoundTripTime") as? Number
+                    val fps = (video.members["framesPerSecond"] as? Number)?.toDouble()
+                        ?: measuredReceiveFps
                     if (bytes != null) {
                         val now = android.os.SystemClock.elapsedRealtime()
                         if (previousStatsTime > 0 && now > previousStatsTime && bytes >= previousBytes) {
                             val mbps = (bytes - previousBytes) * 8.0 / (now - previousStatsTime) / 1000.0
-                            onResult(String.format(java.util.Locale.US, "%.2f Мбит/с", mbps) +
-                                (if (loss != null && loss > 0) " · потеряно пакетов: $loss" else ""))
+                            val label = String.format(java.util.Locale.US, "%.2f Мбит/с", mbps)
+                            onResult(label + (if (mime.isNullOrBlank()) "" else " · $mime") +
+                                (if (packetsLost != null && packetsLost > 0) " · потери: $packetsLost" else ""))
                         }
                         previousBytes = bytes
                         previousStatsTime = now
+                    }
+                    if (packetsReceived != null && packetsLost != null) {
+                        val gained = if (previousReceivedPackets < 0L) 0
+                            else (packetsReceived - previousReceivedPackets).coerceAtLeast(0L)
+                        val lost = if (previousLostPackets < 0L) 0
+                            else (packetsLost - previousLostPackets).coerceAtLeast(0L)
+                        previousReceivedPackets = packetsReceived
+                        previousLostPackets = packetsLost
+                        val freshDecoded = if (decoded != null && previousDecodedFrames >= 0L)
+                            (decoded - previousDecodedFrames).coerceAtLeast(0) else 0
+                        val freshDropped = if (dropped != null && previousDroppedFrames >= 0L)
+                            (dropped - previousDroppedFrames).coerceAtLeast(0) else 0
+                        if (decoded != null) previousDecodedFrames = decoded
+                        if (dropped != null) previousDroppedFrames = dropped
+                        if (gained + lost > 0 && fps > 0.0) {
+                            val lossPct = 100.0 * lost / (gained + lost)
+                            val droppedPct = if (freshDecoded + freshDropped > 0)
+                                100.0 * freshDropped / (freshDecoded + freshDropped) else 0.0
+                            val health = ReceptionHealth(fps.coerceIn(0.0, 240.0), lossPct,
+                                ((rtt?.toDouble() ?: 0.0) * 1000).coerceIn(0.0, 30000.0),
+                                droppedPct)
+                            if (health.valid) onFeedback(health)
+                        }
                     }
                 }
             }
@@ -384,22 +463,56 @@ class RtcEngine(
         }
     }
 
-    @Synchronized fun setQuality(value: VideoQuality): CaptureOption {
-        qualityProfile = value
-        val requested = chooseCapture(value)
+    @Synchronized private fun applyCameraQuality(next: VideoQuality): CaptureOption {
+        if (role != Role.BABY || capturer == null || qualityProfile == next) return currentCapture
+        val requested = chooseCapture(next)
         try {
             capturer?.changeCaptureFormat(requested.width, requested.height, requested.fps)
             currentCapture = requested
+            qualityProfile = next
+            updateEncoderBitrate()
+            peer?.let { connection ->
+                try { connection.setBitrate(null, minOf(next.maxBitrateBps / 2, 3_000_000), next.maxBitrateBps) }
+                catch (e: Exception) { Log.w("RtcEngine", "Video bitrate request rejected", e) }
+            }
         } catch (e: Exception) {
             onError("Камера не сменила режим: ${e.message}")
         }
-        updateEncoderBitrate()
-        if (role == Role.BABY) {
-            try { peer?.setBitrate(null, minOf(value.maxBitrateBps / 2, 3_000_000), value.maxBitrateBps) }
-            catch (e: Exception) { Log.w("RtcEngine", "Video bitrate request rejected", e) }
-        }
         return currentCapture
     }
+
+    @Synchronized fun setQuality(value: VideoQuality): CaptureOption {
+        requestedQuality = value
+        return applyCameraQuality(initialCameraQuality())
+    }
+
+    @Synchronized fun setReceiverLimit(limit: VideoEndpointLimit): VideoQuality? {
+        if (role != Role.BABY || limit == receiverLimit) return null
+        receiverLimit = limit
+        val previous = qualityProfile
+        applyCameraQuality(initialCameraQuality())
+        return if (previous != qualityProfile) qualityProfile else null
+    }
+
+    @Synchronized fun setThermalSevere(severe: Boolean): VideoQuality? {
+        if (role != Role.BABY || severe == thermalSevere) return null
+        thermalSevere = severe
+        val previous = qualityProfile
+        applyCameraQuality(initialCameraQuality())
+        return if (previous != qualityProfile) qualityProfile else null
+    }
+
+    @Synchronized fun receiveHealth(health: ReceptionHealth): VideoQuality? {
+        if (role != Role.BABY || requestedQuality != VideoQuality.AUTO || thermalSevere ||
+            !health.valid || peer == null) return null
+        val next = adaptive.accept(health, eligibleProfiles(), android.os.SystemClock.elapsedRealtime())
+            ?: return null
+        val previous = qualityProfile
+        applyCameraQuality(next)
+        return if (qualityProfile != previous) qualityProfile else null
+    }
+
+    fun activeQuality(): VideoQuality = qualityProfile
 
     fun setTalking(value: Boolean) {
         if (role == Role.PARENT) audioTrack?.setEnabled(value)
@@ -421,6 +534,12 @@ class RtcEngine(
         inboundAudioTrack = null
         previousBytes = -1L
         previousStatsTime = 0L
+        previousReceivedPackets = -1L
+        previousLostPackets = -1L
+        previousDecodedFrames = -1L
+        previousDroppedFrames = -1L
+        measuredReceiveFps = 0.0
+        if (role == Role.BABY) receiverLimit = VideoEndpointLimit.UNKNOWN
         videoSender = null
         try { peer?.close() } catch (_: Exception) {}
         try { peer?.dispose() } catch (_: Exception) {}

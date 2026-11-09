@@ -18,6 +18,8 @@ import android.os.*
 import android.util.Log
 import com.homebabymonitor.core.PairingCode
 import com.homebabymonitor.core.VideoQuality
+import com.homebabymonitor.core.VideoEndpointLimit
+import com.homebabymonitor.core.ReceptionHealth
 import com.homebabymonitor.core.SleepSound
 import com.homebabymonitor.core.SleepCommand
 import com.homebabymonitor.audio.SleepAudioPlayer
@@ -117,8 +119,8 @@ class MonitorService : Service() {
                 if (role == Role.BABY && value != null) {
                     settings().edit().putString("camera-quality", value.name).apply()
                     engine?.setQuality(value)
-                    MonitorBus.mutate { it.copy(videoQuality = value.name) }
-                    engine?.sendControl("QUALITY_STATUS:${value.name}")
+                    MonitorBus.mutate { it.copy(videoQuality = value.name, actualVideoQuality = engine?.activeQuality()?.name.orEmpty()) }
+                    engine?.sendControl("QUALITY_STATUS:${value.name}:${engine?.activeQuality()?.name.orEmpty()}")
                 }
             }
             ACTION_CAMERA_MIC -> if (role == Role.BABY) {
@@ -205,8 +207,8 @@ class MonitorService : Service() {
         watchdog.started(SystemClock.elapsedRealtime())
         val speakerKey = if (newRole == Role.BABY) "baby-speaker" else "parent-speaker"
         val volumeKey = if (newRole == Role.BABY) "baby-volume" else "parent-volume"
-        val initialQuality = VideoQuality.fromWire(settings().getString("camera-quality", "FHD_30").orEmpty())
-            ?: VideoQuality.FHD_30
+        val initialQuality = VideoQuality.fromWire(settings().getString("camera-quality", "AUTO").orEmpty())
+            ?: VideoQuality.AUTO
         MonitorBus.state.value = MonitorState(
             role = newRole,
             videoQuality = initialQuality.name,
@@ -276,6 +278,11 @@ class MonitorService : Service() {
                 it.start()
                 it.setCameraMicrophone(MonitorBus.state.value.cameraMicEnabled)
                 it.setPlayback(MonitorBus.state.value.speakerEnabled, MonitorBus.state.value.playbackVolume)
+                MonitorBus.mutate { current -> current.copy(
+                    actualVideoQuality = if (newRole == Role.BABY) it.activeQuality().name else "",
+                    codecSupport = it.localCodecDescription(),
+                    hardwareLimit = it.localEndpointLimit().maxPixelsPerSecond
+                ) }
             }
         } catch (e: LinkageError) {
             Log.e("MonitorService", "WebRTC native library initialization failed", e)
@@ -391,8 +398,32 @@ class MonitorService : Service() {
                 if (measured.length <= 60) MonitorBus.mutate { it.copy(actualVideo = measured) }
             }
             role == Role.PARENT && message.startsWith("QUALITY_STATUS:") -> {
-                VideoQuality.fromWire(message.removePrefix("QUALITY_STATUS:"))?.let { profile ->
-                    MonitorBus.mutate { it.copy(videoQuality = profile.name) }
+                val parts = message.split(':')
+                if (parts.size in 2..3) {
+                    val requested = VideoQuality.fromWire(parts[1])
+                    val actual = VideoQuality.fromWire(parts.getOrElse(2) { parts[1] })
+                    if (requested != null && actual != null)
+                        MonitorBus.mutate { it.copy(videoQuality = requested.name, actualVideoQuality = actual.name) }
+                }
+            }
+            role == Role.BABY && message.startsWith("RX_CAPS:") -> {
+                val limit = VideoEndpointLimit.parse(message)
+                if (limit != null) wifiHandler.post {
+                    if (running.get() && role == Role.BABY) {
+                        engine?.setReceiverLimit(limit)?.let { profile ->
+                            MonitorBus.mutate { it.copy(actualVideoQuality = profile.name) }
+                        }
+                    }
+                }
+            }
+            role == Role.BABY && message.startsWith("RX_HEALTH:") -> {
+                val health = ReceptionHealth.parse(message)
+                if (health != null) wifiHandler.post {
+                    if (running.get() && role == Role.BABY) {
+                        engine?.receiveHealth(health)?.let { profile ->
+                            MonitorBus.mutate { it.copy(actualVideoQuality = profile.name) }
+                        }
+                    }
                 }
             }
             role == Role.BABY && message.startsWith("MUSIC:") -> {
@@ -478,7 +509,14 @@ class MonitorService : Service() {
             pipe?.send(WireMessage.Ping)
             if (role == Role.BABY) {
                 engine?.sendControl("PING")
-                engine?.sendControl("QUALITY_STATUS:${MonitorBus.state.value.videoQuality}")
+                engine?.sendControl("QUALITY_STATUS:${MonitorBus.state.value.videoQuality}:${engine?.activeQuality()?.name.orEmpty()}")
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+                    val hot = power.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
+                    engine?.setThermalSevere(hot)?.let { selected ->
+                        MonitorBus.mutate { it.copy(actualVideoQuality = selected.name) }
+                    }
+                }
                 engine?.sendControl("MIC_STATUS:${if (MonitorBus.state.value.cameraMicEnabled) 1 else 0}")
                 val sound = sleepPlayer.currentSound()
                 val remaining = sleepPlayer.remainingSeconds()
@@ -493,7 +531,13 @@ class MonitorService : Service() {
                     if (level >= 0 && scale > 0) engine?.sendControl("BATTERY:${level * 100 / scale}:${if (charging) 1 else 0}")
                 }
             } else if (role == Role.PARENT) {
-                engine?.pollVideoStats { stats -> MonitorBus.mutate { it.copy(networkVideo = stats) } }
+                engine?.localEndpointLimit()?.let { limit ->
+                    engine?.sendControl(limit.encode())
+                }
+                engine?.pollVideoStats(
+                    onResult = { stats -> MonitorBus.mutate { it.copy(networkVideo = stats) } },
+                    onFeedback = { health -> engine?.sendControl(health.encode()) }
+                )
                 val problem = watchdog.problem(SystemClock.elapsedRealtime())
                 if (problem != null && !alarmedForOutage) {
                     alarmedForOutage = true
