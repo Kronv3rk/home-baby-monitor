@@ -196,6 +196,48 @@ class CoreTest {
         }
     }
 
+    @Test fun autoVideoNeverAssumesUnadvertisedFourKCapability() {
+        val formats = listOf(CaptureOption(1920, 1080, 30), CaptureOption(3840, 2160, 60))
+        val limited = AdaptiveVideoPolicy.supported(
+            formats, VideoEndpointLimit(3840L * 2160 * 60), VideoEndpointLimit.UNKNOWN
+        )
+        assertTrue(VideoQuality.FHD_30 in limited)
+        assertFalse(VideoQuality.UHD_60 in limited)
+        val full = AdaptiveVideoPolicy.supported(
+            formats, VideoEndpointLimit(3840L * 2160 * 60),
+            VideoEndpointLimit(3840L * 2160 * 60)
+        )
+        assertTrue(VideoQuality.UHD_60 in full)
+        assertEquals(VideoQuality.FHD_30, AdaptiveVideoPolicy.safeInitial(full))
+    }
+
+    @Test fun autoVideoNeedsRepeatedGoodFramesToUpgradeAndDowngradesOnLoss() {
+        val policy = AdaptiveVideoPolicy()
+        val profiles = AdaptiveVideoPolicy.ordered
+        assertEquals(VideoQuality.FHD_30, policy.reset(profiles))
+        val good = ReceptionHealth(30.0, 0.1, 40.0)
+        repeat(7) { assertNull(policy.accept(good, profiles, 32000L + it * 2000)) }
+        assertEquals(VideoQuality.FHD_60, policy.accept(good, profiles, 46000L))
+        val bad = ReceptionHealth(10.0, 10.0, 450.0)
+        assertNull(policy.accept(bad, profiles, 50000L))
+        assertEquals(VideoQuality.FHD_30, policy.accept(bad, profiles, 56000L))
+    }
+
+    @Test fun videoFeedbackRejectsUntrustedValuesAndPreservesPrecision() {
+        val health = ReceptionHealth(28.5, 1.2, 53.0, 0.5)
+        assertEquals(health, ReceptionHealth.parse(health.encode()))
+        for (input in listOf("RX_HEALTH:99999:0:0:0", "RX_HEALTH:-1:0:0:0",
+            "RX_HEALTH:20:1010:0:0", "RX_HEALTH:20:0:0",
+            "RX_HEALTH:20:0:0:0:1", "RX_HEALTH:20:x:0:0")) {
+            assertNull(ReceptionHealth.parse(input))
+        }
+    }
+
+    @Test fun unsupportedManualFourKIsClampedToActualEndpointCapability() {
+        val allowed = listOf(VideoQuality.ECONOMY, VideoQuality.HD, VideoQuality.FHD_30)
+        assertEquals(VideoQuality.FHD_30, AdaptiveVideoPolicy.limitManual(VideoQuality.UHD_60, allowed))
+    }
+
     @Test fun musicCommandRejectsInvalidValues() {
         val request = SleepCommand(SleepSound.MUSIC_BOX, 30, 20)
         assertEquals(request, SleepCommand.parse(request.encode()))
