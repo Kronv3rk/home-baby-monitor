@@ -244,6 +244,7 @@ private fun BabyCameraScreen(
         Detail("Активный режим", VideoQuality.fromWire(state.actualVideoQuality)?.title ?: "Определяется…")
         Detail("Фактическая съёмка", state.actualVideo.ifEmpty { "Запускается…" })
         Detail("Аппаратные кодеки", state.codecSupport.ifBlank { "Проверяются…" })
+        Detail("Кодек видеопотока", state.negotiatedCodec.ifBlank { "Согласуется…" })
         Text("4K / 60 к/с доступно только при поддержке камерой и аппаратными кодировщиками обоих телефонов. На слабой сети приоритет у стабильного звука и небольшой задержки.",
             color = muted, fontSize = 12.sp, lineHeight = 18.sp)
     }
@@ -314,6 +315,10 @@ private fun ParentMonitorScreen(
         Detail("Активный режим", VideoQuality.fromWire(state.actualVideoQuality)?.title ?: "Измеряется…")
         Detail("Принимаемый поток", state.actualVideo.ifEmpty { "Нет кадров" })
         Detail("Скорость / кодек / потери", state.networkVideo.ifEmpty { "Измеряется…" })
+        Text(state.videoTiming.ifBlank { "Сбор статистики буферизации и декодирования…" },
+            color = muted, fontSize = 12.sp, lineHeight = 18.sp)
+        Text("Время в сетевом буфере и декодере — не полная задержка между камерой и экраном.",
+            color = muted, fontSize = 12.sp, lineHeight = 18.sp)
         Detail("Кодеки монитора", state.codecSupport.ifBlank { "Не определены" })
         Text("В автоматическом режиме камера учитывает возможности обоих устройств, полученные кадры, потери и задержку. Реальное качество может быть ниже выбранного режима.",
             color = muted, fontSize = 12.sp, lineHeight = 18.sp)
