@@ -1,7 +1,7 @@
 import com.homebabymonitor.core.*
 
 fun main() {
-    val formats = listOf(CaptureOption(1920, 1080, 30), CaptureOption(3840, 2160, 60))
+    val formats = listOf(CaptureOption(1920, 1080, 30), CaptureOption(1920, 1080, 60), CaptureOption(3840, 2160, 60))
     val local = VideoEndpointLimit(3840L * 2160 * 60)
     val conservative = AdaptiveVideoPolicy.supported(formats, local, VideoEndpointLimit.UNKNOWN)
     check(VideoQuality.UHD_60 !in conservative)
