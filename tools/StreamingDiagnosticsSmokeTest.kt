@@ -19,7 +19,7 @@ fun main() {
     // Simulated 24-hour session, alternating healthy Wi-Fi and short congestion bursts.
     repeat(43_200) { frame ->
         val seconds = frame * 2L
-        val unstable = frame % 300 in 0..8
+        val unstable = frame % 1800 in 0..8
         val sample = if (unstable) ReceptionHealth(8.0, 12.0, 650.0, 20.0)
         else ReceptionHealth(adaptation.active.fps.toDouble(), 0.2, 45.0, 0.0)
         if (adaptation.accept(sample, profiles, seconds * 1000) != null) switches++
