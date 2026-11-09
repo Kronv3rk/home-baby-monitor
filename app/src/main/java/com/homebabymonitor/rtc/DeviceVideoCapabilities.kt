@@ -38,7 +38,9 @@ internal object DeviceVideoCapabilities {
                     val normalized = when (mime) {
                         MediaFormat.MIMETYPE_VIDEO_AVC -> "H264"
                         MediaFormat.MIMETYPE_VIDEO_HEVC -> "H265"
-                        else -> mime.substringAfterLast('/').uppercase()
+                        MediaFormat.MIMETYPE_VIDEO_VP8 -> "VP8"
+                        MediaFormat.MIMETYPE_VIDEO_VP9 -> "VP9"
+                        else -> "AV1"
                     }
                     for (profile in AdaptiveVideoPolicy.ordered) {
                         if (profile.width <= 0 || profile.height <= 0) continue
