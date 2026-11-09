@@ -256,6 +256,34 @@ class CoreTest {
         assertEquals(VideoQuality.FHD_30, AdaptiveVideoPolicy.safeInitial(options))
     }
 
+    @Test fun codecBudgetsRejectDuplicatesOrBogusClaims() {
+        val caps = VideoCodecBudgets(mapOf("H264" to 1920L * 1080 * 30, "H265" to 3840L * 2160 * 60))
+        assertEquals(caps, VideoCodecBudgets.parse(caps.encode()))
+        for (input in listOf("RX_CODECS:H264=100,H264=101", "RX_CODECS:H264=-1",
+             "RX_CODECS:H265=99999999999999", "RX_CODECS:BAD=100",
+             "RX_CODECS:H264=0", "RX_CODECS:H264=abc")) {
+            assertNull(VideoCodecBudgets.parse(input))
+        }
+    }
+
+    @Test fun receiverCodecPerformanceMustBeRespectedNotFastestOtherCodec() {
+        val camera = listOf(CaptureOption(1920,1080,30), CaptureOption(3840,2160,60))
+        val sender = VideoCodecBudgets(mapOf("H265" to 3840L * 2160 * 60))
+        val receiver = VideoCodecBudgets(mapOf("H265" to 1920L * 1080 * 30, "H264" to 3840L * 2160 * 60))
+        val supported = AdaptiveVideoPolicy.supported(camera,
+            VideoEndpointLimit(sender.rateFor("H265")), VideoEndpointLimit(receiver.rateFor("H265")))
+        assertFalse(VideoQuality.UHD_60 in supported)
+    }
+
+    @Test fun hardwareCodecPreferenceKeepsRecoveryFormats() {
+        val options = listOf("VP8","H264","RTX","H265","AV1","RED")
+        val ranked = VideoCodecPreference.ordered(options,
+            VideoCodecBudgets(mapOf("H264" to 1920L*1080*30, "H265" to 3840L*2160*60)))
+        assertEquals("H265", ranked.first())
+        assertEquals(listOf("RTX", "RED"), ranked.takeLast(2))
+        assertEquals(options.toSet(), ranked.toSet())
+    }
+
     @Test fun musicCommandRejectsInvalidValues() {
         val request = SleepCommand(SleepSound.MUSIC_BOX, 30, 20)
         assertEquals(request, SleepCommand.parse(request.encode()))

@@ -11,6 +11,10 @@ import com.homebabymonitor.core.CaptureOption
 import com.homebabymonitor.core.AdaptiveVideoPolicy
 import com.homebabymonitor.core.VideoEndpointLimit
 import com.homebabymonitor.core.ReceptionHealth
+import com.homebabymonitor.core.VideoCodecBudgets
+import com.homebabymonitor.core.VideoCodecPreference
+import com.homebabymonitor.core.PlaybackTimingSampler
+import com.homebabymonitor.core.PlaybackTimingCounters
 import com.homebabymonitor.core.InitializationGate
 import com.homebabymonitor.core.WireMessage
 import org.webrtc.*
@@ -54,6 +58,9 @@ class RtcEngine(
     private var cameraFormats: List<CaptureOption> = emptyList()
     private var hardwareLimit = VideoEndpointLimit.UNKNOWN
     private var receiverLimit = VideoEndpointLimit.UNKNOWN
+    private var localCodecBudgets = VideoCodecBudgets(emptyMap())
+    private var receiverCodecBudgets = VideoCodecBudgets(emptyMap())
+    private var negotiatedVideoCodec: String? = null
     private var thermalSevere = false
     private val adaptive = AdaptiveVideoPolicy()
     private var supportedCodecNames = ""
@@ -62,6 +69,7 @@ class RtcEngine(
     private var previousLostPackets = -1L
     private var previousDecodedFrames = -1L
     private var previousDroppedFrames = -1L
+    private val timingSampler = PlaybackTimingSampler()
     @Volatile private var cameraMicEnabled = true
     @Volatile private var playbackEnabled = true
     @Volatile private var playbackVolume = 100
@@ -129,6 +137,7 @@ class RtcEngine(
                 else decoderFactory.supportedCodecs.map { it.name }.toSet()
             val capabilities = DeviceVideoCapabilities.probe(role == Role.BABY, platformCodecs)
             hardwareLimit = capabilities.limit
+            localCodecBudgets = capabilities.budgets
             supportedCodecNames = capabilities.codecs
             factory = PeerConnectionFactory.builder()
                 .setAudioDeviceModule(module)
@@ -145,12 +154,22 @@ class RtcEngine(
     }
 
     fun localEndpointLimit(): VideoEndpointLimit = hardwareLimit
+    fun localCodecBudgets(): VideoCodecBudgets = localCodecBudgets
     fun localCodecDescription(): String = supportedCodecNames
+    fun negotiatedCodec(): String = negotiatedVideoCodec ?: "не определён"
 
-    @Synchronized private fun eligibleProfiles(): List<VideoQuality> =
-        AdaptiveVideoPolicy.supported(cameraFormats,
-            if (thermalSevere) VideoEndpointLimit(1280L * 720 * 30) else hardwareLimit,
-            receiverLimit)
+    @Synchronized private fun eligibleProfiles(): List<VideoQuality> {
+        // Codec throughput must refer to the negotiated RTP codec on *both* endpoints.
+        // The fastest unrelated decoder must never unlock a 4K H264 stream.
+        val codec = negotiatedVideoCodec
+        val encoder = if (codec != null) localCodecBudgets.rateFor(codec)
+            else VideoEndpointLimit.UNKNOWN.maxPixelsPerSecond
+        val decoder = if (codec != null) receiverCodecBudgets.rateFor(codec)
+            else VideoEndpointLimit.UNKNOWN.maxPixelsPerSecond
+        val thermal = if (thermalSevere) 1280L * 720 * 30 else Long.MAX_VALUE
+        return AdaptiveVideoPolicy.supported(cameraFormats,
+            VideoEndpointLimit(minOf(encoder, thermal)), VideoEndpointLimit(decoder))
+    }
 
     @Synchronized private fun initialCameraQuality(): VideoQuality {
         val allowed = eligibleProfiles()
@@ -243,6 +262,25 @@ class RtcEngine(
             )
             installChannel(connection.createDataChannel("controls", DataChannel.Init()))
         }
+        // Apply codec order before SDP exchange; never exclude RTX/RED/FEC or fallback codecs.
+        // Each end ranks its own hardware; normal offer/answer intersects compatible codecs.
+        try {
+            val videoType = MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO
+            val supported = if (role == Role.BABY)
+                factory?.getRtpSenderCapabilities(videoType)?.codecs.orEmpty()
+            else factory?.getRtpReceiverCapabilities(videoType)?.codecs.orEmpty()
+            if (supported.isNotEmpty()) {
+                val preference = supported.sortedWith(
+                    compareBy<RtpCapabilities.CodecCapability> {
+                        VideoCodecPreference.rank(it.name, localCodecBudgets)
+                    }
+                )
+                connection.transceivers.filter { it.mediaType == videoType }
+                    .forEach { it.setCodecPreferences(preference) }
+            }
+        } catch (e: Exception) {
+            Log.w("RtcEngine", "Hardware codec preference failed; WebRTC default will be used", e)
+        }
         if (initiator) createOffer()
     }
 
@@ -274,7 +312,11 @@ class RtcEngine(
     }
 
     /** Report actual received video bandwidth; ICE and encoder control remain adaptive. */
-    fun pollVideoStats(onResult: (String) -> Unit, onFeedback: (ReceptionHealth) -> Unit = {}) {
+    fun pollVideoStats(
+        onResult: (String) -> Unit,
+        onFeedback: (ReceptionHealth) -> Unit = {},
+        onTiming: (String) -> Unit = {}
+    ) {
         if (role != Role.PARENT || closing.get()) return
         val connection = peer ?: return
         val generation = peerGeneration
@@ -291,6 +333,20 @@ class RtcEngine(
                     val packetsReceived = (video.members["packetsReceived"] as? Number)?.toLong()
                     val decoded = (video.members["framesDecoded"] as? Number)?.toLong()
                     val dropped = (video.members["framesDropped"] as? Number)?.toLong()
+                    val jitterSum = (video.members["jitterBufferDelay"] as? Number)?.toDouble()
+                    val bufferCount = (video.members["jitterBufferEmittedCount"] as? Number)?.toLong()
+                    val decoderSum = (video.members["totalDecodeTime"] as? Number)?.toDouble()
+                    val freezeCount = (video.members["freezeCount"] as? Number)?.toLong()
+                    if (jitterSum != null && bufferCount != null && decoderSum != null &&
+                        decoded != null && freezeCount != null) {
+                        timingSampler.record(PlaybackTimingCounters(jitterSum, bufferCount,
+                            decoderSum, decoded, freezeCount))?.let { delta ->
+                            val line = String.format(java.util.Locale.US,
+                                "Буфер %.0f мс · декодирование %.0f мс",
+                                delta.bufferMs, delta.decodeMs)
+                            onTiming(line + if (delta.newFreezes > 0) " · замирания +${delta.newFreezes}" else "")
+                        }
+                    }
                     val codecId = video.members["codecId"] as? String
                     val mime = codecId?.let { report.statsMap[it]?.members?.get("mimeType") as? String }
                         ?.substringAfter('/', "")
@@ -488,10 +544,48 @@ class RtcEngine(
 
     @Synchronized fun setReceiverLimit(limit: VideoEndpointLimit): VideoQuality? {
         if (role != Role.BABY || limit == receiverLimit) return null
-        receiverLimit = limit
+        receiverLimit = limit // Legacy clients; does not unlock 4K without per-codec evidence.
         val previous = qualityProfile
         applyCameraQuality(initialCameraQuality())
         return if (previous != qualityProfile) qualityProfile else null
+    }
+
+    @Synchronized fun setReceiverCodecBudgets(budgets: VideoCodecBudgets): VideoQuality? {
+        if (role != Role.BABY || budgets == receiverCodecBudgets) return null
+        receiverCodecBudgets = budgets
+        val previous = qualityProfile
+        applyCameraQuality(initialCameraQuality())
+        return if (previous != qualityProfile) qualityProfile else null
+    }
+
+    /** Must only be called for codec reported by a live RTP sender, not an SDP preference. */
+    @Synchronized fun setNegotiatedVideoCodec(codecName: String): VideoQuality? {
+        val normalized = codecName.uppercase()
+        if (role != Role.BABY || normalized !in VideoCodecBudgets.KNOWN ||
+            normalized == negotiatedVideoCodec) return null
+        negotiatedVideoCodec = normalized
+        val previous = qualityProfile
+        applyCameraQuality(initialCameraQuality())
+        return if (previous != qualityProfile) qualityProfile else null
+    }
+
+    fun pollSenderCodec(onSelected: (String) -> Unit) {
+        if (role != Role.BABY || closing.get()) return
+        val connection = peer ?: return
+        val generation = peerGeneration
+        try {
+            connection.getStats { report ->
+                if (closing.get() || generation != peerGeneration) return@getStats
+                val video = report.statsMap.values.firstOrNull { stat ->
+                    stat.type == "outbound-rtp" &&
+                        (stat.members["kind"] == "video" || stat.members["mediaType"] == "video")
+                } ?: return@getStats
+                val codecId = video.members["codecId"] as? String ?: return@getStats
+                val mime = report.statsMap[codecId]?.members?.get("mimeType") as? String ?: return@getStats
+                val codec = mime.substringAfter('/').uppercase()
+                if (codec in VideoCodecBudgets.KNOWN) onSelected(codec)
+            }
+        } catch (e: Exception) { Log.w("RtcEngine", "Sender codec statistics unavailable", e) }
     }
 
     @Synchronized fun setThermalSevere(severe: Boolean): VideoQuality? {
@@ -539,11 +633,20 @@ class RtcEngine(
         previousDecodedFrames = -1L
         previousDroppedFrames = -1L
         measuredReceiveFps = 0.0
-        if (role == Role.BABY) receiverLimit = VideoEndpointLimit.UNKNOWN
+        timingSampler.reset()
+        if (role == Role.BABY) {
+            receiverLimit = VideoEndpointLimit.UNKNOWN
+            receiverCodecBudgets = VideoCodecBudgets(emptyMap())
+            negotiatedVideoCodec = null
+        }
         videoSender = null
         try { peer?.close() } catch (_: Exception) {}
         try { peer?.dispose() } catch (_: Exception) {}
         peer = null
+        // A reconnected monitor may support different codecs; restore the safe capture mode.
+        if (role == Role.BABY && capturer != null) {
+            applyCameraQuality(initialCameraQuality())
+        }
     }
 
     @Synchronized fun stop() {

@@ -23,6 +23,8 @@ data class MonitorState(
     val videoQuality: String = "AUTO",
     val actualVideoQuality: String = "",
     val codecSupport: String = "",
+    val negotiatedCodec: String = "",
+    val videoTiming: String = "",
     val hardwareLimit: Long = 0L,
     val actualVideo: String = "",
     val networkVideo: String = "",
