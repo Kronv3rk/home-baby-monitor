@@ -19,6 +19,7 @@ import android.util.Log
 import com.homebabymonitor.core.PairingCode
 import com.homebabymonitor.core.VideoQuality
 import com.homebabymonitor.core.VideoEndpointLimit
+import com.homebabymonitor.core.VideoCodecBudgets
 import com.homebabymonitor.core.ReceptionHealth
 import com.homebabymonitor.core.SleepSound
 import com.homebabymonitor.core.SleepCommand
@@ -406,6 +407,16 @@ class MonitorService : Service() {
                         MonitorBus.mutate { it.copy(videoQuality = requested.name, actualVideoQuality = actual.name) }
                 }
             }
+            role == Role.BABY && message.startsWith("RX_CODECS:") -> {
+                val budgets = VideoCodecBudgets.parse(message)
+                if (budgets != null) wifiHandler.post {
+                    if (running.get() && role == Role.BABY) {
+                        engine?.setReceiverCodecBudgets(budgets)?.let { profile ->
+                            MonitorBus.mutate { it.copy(actualVideoQuality = profile.name) }
+                        }
+                    }
+                }
+            }
             role == Role.BABY && message.startsWith("RX_CAPS:") -> {
                 val limit = VideoEndpointLimit.parse(message)
                 if (limit != null) wifiHandler.post {
@@ -508,6 +519,18 @@ class MonitorService : Service() {
         try {
             pipe?.send(WireMessage.Ping)
             if (role == Role.BABY) {
+                engine?.pollSenderCodec { codec ->
+                    wifiHandler.post {
+                        if (running.get() && role == Role.BABY) {
+                            val changed = engine?.setNegotiatedVideoCodec(codec)
+                            MonitorBus.mutate {
+                                it.copy(negotiatedCodec = codec,
+                                    actualVideoQuality = changed?.name
+                                        ?: engine?.activeQuality()?.name.orEmpty())
+                            }
+                        }
+                    }
+                }
                 engine?.sendControl("PING")
                 engine?.sendControl("QUALITY_STATUS:${MonitorBus.state.value.videoQuality}:${engine?.activeQuality()?.name.orEmpty()}")
                 if (Build.VERSION.SDK_INT >= 29) {
@@ -533,6 +556,9 @@ class MonitorService : Service() {
             } else if (role == Role.PARENT) {
                 engine?.localEndpointLimit()?.let { limit ->
                     engine?.sendControl(limit.encode())
+                }
+                engine?.localCodecBudgets()?.let { codecs ->
+                    engine?.sendControl(codecs.encode())
                 }
                 engine?.pollVideoStats(
                     onResult = { stats -> MonitorBus.mutate { it.copy(networkVideo = stats) } },
