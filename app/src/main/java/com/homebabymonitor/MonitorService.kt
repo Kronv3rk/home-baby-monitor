@@ -687,13 +687,24 @@ class MonitorService : Service() {
     private fun alert(title: String, text: String, id: Int) {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            manager.notify(id, Notification.Builder(this, ALERT_CHANNEL)
+            val builder = Notification.Builder(this, ALERT_CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setAutoCancel(true)
                 .setContentIntent(notificationIntent())
-                .build())
+            if (id == 401) {
+                val acknowledge = PendingIntent.getService(
+                    this, 401, Intent(this, MonitorService::class.java).apply {
+                        action = ACTION_ACK_ALERT
+                    }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                builder.addAction(Notification.Action.Builder(
+                    android.R.drawable.ic_menu_close_clear_cancel,
+                    "Подтвердить предупреждение", acknowledge
+                ).build())
+            }
+            manager.notify(id, builder.build())
         }
         try {
             val tone = ToneGenerator(AudioManager.STREAM_ALARM, 85)
