@@ -15,6 +15,7 @@ import com.homebabymonitor.core.VideoCodecBudgets
 import com.homebabymonitor.core.VideoCodecPreference
 import com.homebabymonitor.core.PlaybackTimingSampler
 import com.homebabymonitor.core.PlaybackTimingCounters
+import com.homebabymonitor.core.CaptureRecoveryGate
 import com.homebabymonitor.core.InitializationGate
 import com.homebabymonitor.core.WireMessage
 import org.webrtc.*
@@ -37,7 +38,9 @@ class RtcEngine(
     private val audioDetector = AudioTrigger()
     private var sampleCount = 0
     private var lastReportAt = android.os.SystemClock.elapsedRealtime()
+    private val recovery = CaptureRecoveryGate()
     private val night = NightFrameProcessor { width, height ->
+        recovery.frame(android.os.SystemClock.elapsedRealtime())
         sampleCount++
         val now = android.os.SystemClock.elapsedRealtime()
         if (now - lastReportAt >= 1500) {
@@ -199,6 +202,7 @@ class RtcEngine(
             MonitorBus.setCameraVideoTrack(videoTrack)
             qualityProfile = initialCameraQuality()
             currentCapture = chooseCapture(qualityProfile)
+            recovery.start(android.os.SystemClock.elapsedRealtime())
             capturer?.startCapture(currentCapture.width, currentCapture.height, currentCapture.fps)
         } catch (e: Exception) { onError("Ошибка запуска камеры: ${e.message}") }
     }
@@ -517,6 +521,30 @@ class RtcEngine(
         } catch (e: Exception) {
             Log.w("RtcEngine", "Video bitrate cannot be changed", e)
         }
+    }
+
+    /** Restart the same capturer without tearing down the audio/peer tracks.
+     * Must be called on a service worker, never on the main/UI or capture thread.
+     */
+    @Synchronized fun recoverFrozenCapture(): CaptureRecoveryGate.Action {
+        if (role != Role.BABY || capturer == null || closing.get()) return CaptureRecoveryGate.Action.NONE
+        val action = recovery.next(android.os.SystemClock.elapsedRealtime())
+        if (action != CaptureRecoveryGate.Action.RESTART) return action
+        val current = capturer ?: return CaptureRecoveryGate.Action.NONE
+        try {
+            current.stopCapture()
+            // The first recovery uses a low-cost fallback if even the selected
+            // capture mode is too expensive for sustained operation.
+            val request = if (requestedQuality == VideoQuality.AUTO) VideoQuality.HD else qualityProfile
+            val selected = chooseCapture(request)
+            current.startCapture(selected.width, selected.height, selected.fps)
+            currentCapture = selected
+            Log.w("RtcEngine", "Restarted camera capturer after no frames")
+        } catch (e: Exception) {
+            Log.e("RtcEngine", "Camera capture recovery failed", e)
+            onError("Не удалось восстановить видеосъёмку: ${e.message}")
+        }
+        return action
     }
 
     @Synchronized private fun applyCameraQuality(next: VideoQuality): CaptureOption {
