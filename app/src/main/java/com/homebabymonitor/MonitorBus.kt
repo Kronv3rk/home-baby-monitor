@@ -19,6 +19,7 @@ data class MonitorState(
     val charging: Boolean = false,
     val lastSoundAt: Long = 0,
     val nightMode: Boolean = false,
+    val nightProcessingStatus: String = "",
     val torchOn: Boolean = false,
     val videoQuality: String = "AUTO",
     val actualVideoQuality: String = "",
