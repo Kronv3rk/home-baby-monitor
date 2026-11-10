@@ -588,6 +588,7 @@ class RtcEngine(
                 catch (e: Exception) { Log.w("RtcEngine", "Video bitrate request rejected", e) }
             }
         } catch (e: Exception) {
+            adaptive.applied(qualityProfile, android.os.SystemClock.elapsedRealtime())
             onError("Камера не сменила режим: ${e.message}")
         }
         return currentCapture
