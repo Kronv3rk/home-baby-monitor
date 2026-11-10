@@ -438,7 +438,7 @@ class MonitorService : Service() {
             role == Role.PARENT && message.startsWith("NIGHT_EFFECT:") -> {
                 val payload = message.removePrefix("NIGHT_EFFECT:")
                 val chunks = payload.split(':')
-                if (chunks.size == 2 && chunks[0] in setOf("OFF", "SOFTWARE", "PASSTHROUGH", "COOLDOWN") &&
+                if (chunks.size == 2 && chunks[0] in setOf("OFF", "WAITING", "SOFTWARE", "PASSTHROUGH", "COOLDOWN") &&
                     chunks[1].toIntOrNull()?.let { it in 0..5000 } == true) {
                     MonitorBus.mutate { it.copy(nightProcessingStatus = payload) }
                 }
