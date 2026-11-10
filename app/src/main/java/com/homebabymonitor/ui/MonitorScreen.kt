@@ -290,6 +290,8 @@ private fun BabyCameraScreen(
         Text("Состояние камеры", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         Detail("Режим", VideoQuality.fromWire(state.actualVideoQuality)?.title ?: "—")
         Detail("Ночной режим", if (state.nightMode) "Включён" else "Выключен")
+        if (state.cameraRecoveryStatus.isNotBlank())
+            Detail("Состояние видеозахвата", state.cameraRecoveryStatus)
         Detail("Звуки для сна", SleepSound.fromWire(state.musicSound)?.title ?: "Выключены")
     }
     SleepMusicPanel(state, music, musicVolume, localControls = true)
@@ -350,6 +352,13 @@ private fun ParentMonitorScreen(
         IncomingAudioControls(state, "Слушать комнату ребёнка", speaker, playbackVolume)
         if (!state.cameraMicEnabled) {
             Text("Микрофон камеры отключён на втором телефоне.", color = coral, fontSize = 12.sp)
+        } else {
+            Text(when (state.microphoneCaptureHealthy) {
+                true -> "Микрофон камеры захватывает звук"
+                false -> "Нет новых аудиоданных с камеры"
+                null -> "Ожидание данных от микрофона камеры"
+            }, color = if (state.microphoneCaptureHealthy == false) coral else muted,
+                fontSize = 12.sp, lineHeight = 18.sp)
         }
         HorizontalDivider(color = faint)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
