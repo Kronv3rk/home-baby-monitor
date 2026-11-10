@@ -14,19 +14,23 @@ class NightFrameBudget(
     private val maxSlowFrames: Int = 3,
     private val coolDownNanos: Long = 30_000_000_000L
 ) {
-    enum class Decision { DISABLED, SOFTWARE, TOO_EXPENSIVE, OVERLOADED }
+    enum class Decision { DISABLED, WAITING, SOFTWARE, TOO_EXPENSIVE, OVERLOADED }
 
     private var slowFrames = 0
-    private var resumeAt = 0L
+    private var failedFrames = 0
+    private var resumeAt: Long? = null
     @Volatile private var lastDurationNanos = 0L
 
     @Synchronized fun decide(
         enabled: Boolean, width: Int, height: Int, requestedFps: Int, nowNanos: Long
     ): Decision {
         if (!enabled) return Decision.DISABLED
-        if (width <= 0 || height <= 0 || requestedFps !in 1..maxFps ||
+        if (width <= 0 || height <= 0) return Decision.WAITING
+        if (requestedFps !in 1..maxFps ||
             width.toLong() * height.toLong() > maxPixels) return Decision.TOO_EXPENSIVE
-        if (nowNanos < resumeAt) return Decision.OVERLOADED
+        val until = resumeAt
+        if (until != null && nowNanos >= until - coolDownNanos && nowNanos < until)
+            return Decision.OVERLOADED
         return Decision.SOFTWARE
     }
 
@@ -34,11 +38,20 @@ class NightFrameBudget(
     @Synchronized fun observeCost(durationNanos: Long, nowNanos: Long) {
         if (durationNanos < 0) return
         lastDurationNanos = durationNanos
+        failedFrames = 0
         slowFrames = if (durationNanos > slowFrameNanos) slowFrames + 1 else 0
-        if (slowFrames >= maxSlowFrames) {
-            slowFrames = 0
-            resumeAt = nowNanos + coolDownNanos
-        }
+        if (slowFrames >= maxSlowFrames) suspendProcessing(nowNanos)
+    }
+
+    @Synchronized fun observeFailure(nowNanos: Long) {
+        failedFrames++
+        if (failedFrames >= maxSlowFrames) suspendProcessing(nowNanos)
+    }
+
+    private fun suspendProcessing(nowNanos: Long) {
+        slowFrames = 0
+        failedFrames = 0
+        resumeAt = nowNanos + coolDownNanos
     }
 
     fun lastProcessingMilliseconds(): Long = lastDurationNanos / 1_000_000
