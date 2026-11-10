@@ -5,6 +5,7 @@ fun main() {
     val budget = NightFrameBudget(maxPixels = 1920L * 1080, maxFps = 30,
         slowFrameNanos = 12_000_000, maxSlowFrames = 3, coolDownNanos = 30_000_000_000)
     check(budget.decide(false, 1280, 720, 30, 0) == NightFrameBudget.Decision.DISABLED)
+    check(budget.decide(true, 0, 0, 30, 0) == NightFrameBudget.Decision.WAITING)
     check(budget.decide(true, 3840, 2160, 60, 0) == NightFrameBudget.Decision.TOO_EXPENSIVE)
     check(budget.decide(true, 2560, 1440, 30, 0) == NightFrameBudget.Decision.TOO_EXPENSIVE)
     check(budget.decide(true, 1920, 1080, 60, 0) == NightFrameBudget.Decision.TOO_EXPENSIVE)
@@ -18,6 +19,16 @@ fun main() {
     check(budget.decide(true, 1920, 1080, 30, 31_999_000_000L) == NightFrameBudget.Decision.OVERLOADED)
     check(budget.decide(true, 1920, 1080, 30, 32_000_000_000L) == NightFrameBudget.Decision.SOFTWARE)
     budget.observeCost(500_000, 32_000_100_000L)
+    val errors = NightFrameBudget()
+    errors.observeFailure(0)
+    errors.observeFailure(1_000_000_000L)
+    check(errors.decide(true, 1280, 720, 30, 1_000_000_001L) ==
+        NightFrameBudget.Decision.SOFTWARE)
+    errors.observeFailure(2_000_000_000L)
+    check(errors.decide(true, 1280, 720, 30, 3_000_000_000L) ==
+        NightFrameBudget.Decision.OVERLOADED)
+    check(errors.decide(true, 1280, 720, 30, 32_000_000_000L) ==
+        NightFrameBudget.Decision.SOFTWARE)
 
     // Strided source/destination: padding must not be modified, original buffer positions preserved.
     val y = ByteBuffer.allocateDirect(12)
