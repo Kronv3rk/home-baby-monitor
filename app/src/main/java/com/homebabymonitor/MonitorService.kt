@@ -435,6 +435,14 @@ class MonitorService : Service() {
                 val measured = message.removePrefix("LOCAL_RECEIVED:")
                 if (measured.length <= 60) MonitorBus.mutate { it.copy(actualVideo = measured) }
             }
+            role == Role.PARENT && message.startsWith("NIGHT_EFFECT:") -> {
+                val payload = message.removePrefix("NIGHT_EFFECT:")
+                val chunks = payload.split(':')
+                if (chunks.size == 2 && chunks[0] in setOf("OFF", "SOFTWARE", "PASSTHROUGH", "COOLDOWN") &&
+                    chunks[1].toIntOrNull()?.let { it in 0..5000 } == true) {
+                    MonitorBus.mutate { it.copy(nightProcessingStatus = payload) }
+                }
+            }
             role == Role.PARENT && message.startsWith("QUALITY_STATUS:") -> {
                 val parts = message.split(':')
                 if (parts.size in 2..3) {
@@ -530,7 +538,8 @@ class MonitorService : Service() {
 
     private fun updateNight(value: Boolean) {
         engine?.setNight(value)
-        MonitorBus.mutate { it.copy(nightMode = value) }
+        val effect = engine?.nightProcessingStatus().orEmpty()
+        MonitorBus.mutate { it.copy(nightMode = value, nightProcessingStatus = effect) }
         engine?.sendControl("NIGHT_STATUS:${if (value) 1 else 0}")
     }
 
@@ -583,6 +592,9 @@ class MonitorService : Service() {
                 }
                 engine?.sendControl("PING")
                 engine?.sendControl("QUALITY_STATUS:${MonitorBus.state.value.videoQuality}:${engine?.activeQuality()?.name.orEmpty()}")
+                val nightStatus = engine?.nightProcessingStatus() ?: "OFF:0"
+                MonitorBus.mutate { it.copy(nightProcessingStatus = nightStatus) }
+                engine?.sendControl("NIGHT_EFFECT:$nightStatus")
                 if (Build.VERSION.SDK_INT >= 29) {
                     val power = getSystemService(Context.POWER_SERVICE) as PowerManager
                     val hot = power.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
