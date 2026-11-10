@@ -37,6 +37,7 @@ import kotlin.math.roundToInt
 /** The requested night mode may deliberately bypass CPU processing at high frame rates. */
 private fun nightProcessingLabel(status: String): String = when (status.substringBefore(':')) {
     "OFF" -> "Коррекция выключена"
+    "WAITING" -> "Ожидание первых кадров от камеры"
     "SOFTWARE" -> "Коррекция яркости · обработка около ${status.substringAfter(':', "0")} мс/кадр"
     "PASSTHROUGH" -> "Кадры передаются без программной коррекции, чтобы сохранить разрешение и скорость"
     "COOLDOWN" -> "Коррекция временно приостановлена из-за нагрузки на процессор"
