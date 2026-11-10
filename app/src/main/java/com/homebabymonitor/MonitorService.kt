@@ -25,6 +25,8 @@ import com.homebabymonitor.core.SleepSound
 import com.homebabymonitor.core.SleepCommand
 import com.homebabymonitor.audio.SleepAudioPlayer
 import com.homebabymonitor.core.SessionWatchdog
+import com.homebabymonitor.core.IncidentAlarmController
+import com.homebabymonitor.core.CaptureRecoveryGate
 import com.homebabymonitor.core.LocalAddress
 import com.homebabymonitor.core.WireMessage
 import com.homebabymonitor.net.BabyBeacon
@@ -53,6 +55,7 @@ class MonitorService : Service() {
         const val ACTION_PLAYBACK_VOLUME = "com.homebabymonitor.PLAYBACK_VOLUME"
         const val ACTION_MUSIC_VOLUME = "com.homebabymonitor.MUSIC_VOLUME"
         const val ACTION_MUSIC = "com.homebabymonitor.MUSIC"
+        const val ACTION_ACK_ALERT = "com.homebabymonitor.ACK_ALERT"
         const val EXTRA_PROFILE = "profile"
         const val EXTRA_SOUND = "sound"
         const val EXTRA_DURATION = "duration"
@@ -65,7 +68,7 @@ class MonitorService : Service() {
         private const val NOTIFY_RUNNING = 102
     }
 
-    private var role: Role? = null
+    @Volatile private var role: Role? = null
     private var engine: RtcEngine? = null
     private var beacon: BabyBeacon? = null
     private var server: BabySignalServer? = null
@@ -73,7 +76,8 @@ class MonitorService : Service() {
     @Volatile private var pipe: SignalPipe? = null
     private var ticker: ScheduledExecutorService? = null
     private val watchdog = SessionWatchdog()
-    private var alarmedForOutage = false
+    private val incidentAlarm = IncidentAlarmController()
+    @Volatile private var captureRepairPending = false
     private val running = AtomicBoolean(false)
     private val wifiHandler = Handler(Looper.getMainLooper())
     private var wifiRetry: Runnable? = null
@@ -176,6 +180,11 @@ class MonitorService : Service() {
                     }
                 }
             }
+            ACTION_ACK_ALERT -> {
+                incidentAlarm.acknowledge()
+                MonitorBus.mutate { it.copy(incidentAcknowledged = true) }
+                getSystemService(NotificationManager::class.java).cancel(401)
+            }
             ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
         }
         return START_NOT_STICKY
@@ -203,7 +212,8 @@ class MonitorService : Service() {
         running.set(true)
         iceConnected.set(false)
         firstVideoFrameReceived.set(false)
-        alarmedForOutage = false
+        incidentAlarm.observe(null, SystemClock.elapsedRealtime())
+        captureRepairPending = false
         mediaStarted = false
         watchdog.started(SystemClock.elapsedRealtime())
         val speakerKey = if (newRole == Role.BABY) "baby-speaker" else "parent-speaker"
@@ -270,7 +280,14 @@ class MonitorService : Service() {
                 onControl = { message -> handleControl(message) },
                 onVideoFrame = { onVideoFrameReceived() },
                 onCaptureMetrics = { metrics ->
-                    MonitorBus.mutate { it.copy(actualVideo = metrics) }
+                    val restored = captureRepairPending
+                    if (restored) {
+                        captureRepairPending = false
+                        engine?.sendControl("CAMERA_OK")
+                    }
+                    MonitorBus.mutate { it.copy(actualVideo = metrics,
+                        cameraRecoveryStatus = if (restored) "Съёмка восстановлена" else it.cameraRecoveryStatus,
+                        error = if (restored && it.error.startsWith("Не удалось восстановить видеосъёмку")) "" else it.error) }
                     // Receiver frame rate is measured separately by the decoded video sink.
                 },
                 onError = { error -> MonitorBus.mutate { it.copy(error = error) } },
@@ -351,8 +368,12 @@ class MonitorService : Service() {
                 if (firstTransition) {
                     watchdog.connected(SystemClock.elapsedRealtime())
                     firstVideoFrameReceived.set(false)
-                    alarmedForOutage = false
-                    MonitorBus.mutate { it.copy(connected = false, status = "Связь есть. Загружаем видео…", error = "") }
+                    incidentAlarm.observe(null, SystemClock.elapsedRealtime())
+                    MonitorBus.mutate { it.copy(connected = false, incidentTitle = "",
+                        incidentAcknowledged = false,
+                        microphoneCaptureHealthy = null,
+                        remoteCameraFault = false,
+                        status = "Связь есть. Загружаем видео…", error = "") }
                 }
             } else {
                 MonitorBus.mutate { it.copy(connected = true, status = "Связь установлена", error = "") }
@@ -360,6 +381,7 @@ class MonitorService : Service() {
         } else {
             iceConnected.set(false)
             firstVideoFrameReceived.set(false)
+            if (role == Role.PARENT) watchdog.disconnected(SystemClock.elapsedRealtime())
             engine?.setTalking(false)
             MonitorBus.mutate { it.copy(connected = false, talking = false, status = "Проверяем связь…") }
         }
@@ -379,9 +401,11 @@ class MonitorService : Service() {
         iceConnected.set(false)
         firstVideoFrameReceived.set(false)
         engine?.setTalking(false)
+        if (role == Role.PARENT) watchdog.disconnected(SystemClock.elapsedRealtime())
         engine?.closePeer()
         MonitorBus.mutate {
             it.copy(connected = false, talking = false, networkVideo = "", videoTiming = "",
+                microphoneCaptureHealthy = null, remoteCameraFault = false,
                 status = "Связь прервана. Подключаемся заново")
         }
     }
@@ -394,6 +418,19 @@ class MonitorService : Service() {
                 alert("Громкий звук в комнате", "Камера зафиксировала продолжительный громкий звук", 400)
             }
             role == Role.PARENT && message == "PING" -> watchdog.heartbeat(SystemClock.elapsedRealtime())
+            role == Role.PARENT && message.startsWith("MIC_CAPTURE:") -> {
+                val healthy = when (message.removePrefix("MIC_CAPTURE:")) {
+                    "ON" -> true
+                    "STALLED" -> false
+                    "OFF", "UNKNOWN" -> null
+                    else -> return
+                }
+                MonitorBus.mutate { it.copy(microphoneCaptureHealthy = healthy) }
+            }
+            role == Role.PARENT && message == "CAMERA_FAULT" ->
+                MonitorBus.mutate { it.copy(remoteCameraFault = true) }
+            role == Role.PARENT && message == "CAMERA_OK" ->
+                MonitorBus.mutate { it.copy(remoteCameraFault = false) }
             role == Role.PARENT && message.startsWith("LOCAL_RECEIVED:") -> {
                 val measured = message.removePrefix("LOCAL_RECEIVED:")
                 if (measured.length <= 60) MonitorBus.mutate { it.copy(actualVideo = measured) }
@@ -519,6 +556,19 @@ class MonitorService : Service() {
         try {
             pipe?.send(WireMessage.Ping)
             if (role == Role.BABY) {
+                when (engine?.recoverFrozenCapture()) {
+                    CaptureRecoveryGate.Action.RESTART -> {
+                        captureRepairPending = true
+                        MonitorBus.mutate { it.copy(cameraRecoveryStatus = "Перезапускаем съёмку…") }
+                    }
+                    CaptureRecoveryGate.Action.EXHAUSTED -> {
+                        MonitorBus.mutate { it.copy(
+                            cameraRecoveryStatus = "Съёмка остановилась; попытки восстановления исчерпаны",
+                            error = "Нет новых кадров с камеры. Проверьте телефон у ребёнка.") }
+                        engine?.sendControl("CAMERA_FAULT")
+                    }
+                    else -> Unit
+                }
                 engine?.pollSenderCodec { codec ->
                     wifiHandler.post {
                         if (running.get() && role == Role.BABY) {
@@ -541,6 +591,7 @@ class MonitorService : Service() {
                     }
                 }
                 engine?.sendControl("MIC_STATUS:${if (MonitorBus.state.value.cameraMicEnabled) 1 else 0}")
+                engine?.sendControl("MIC_CAPTURE:${engine?.microphoneCaptureStatus(SystemClock.elapsedRealtime()) ?: "UNKNOWN"}")
                 val sound = sleepPlayer.currentSound()
                 val remaining = sleepPlayer.remainingSeconds()
                 MonitorBus.mutate { it.copy(musicSound = sound.name, musicRemainingSeconds = remaining) }
@@ -565,17 +616,47 @@ class MonitorService : Service() {
                     onFeedback = { health -> engine?.sendControl(health.encode()) },
                     onTiming = { timing -> MonitorBus.mutate { it.copy(videoTiming = timing) } }
                 )
-                val problem = watchdog.problem(SystemClock.elapsedRealtime())
-                if (problem != null && !alarmedForOutage) {
-                    alarmedForOutage = true
-                    val (title, details) = when (problem) {
-                        SessionWatchdog.Problem.NEVER_CONNECTED -> "Камера не подключилась" to "Не удалось получить первоначальное соединение с камерой"
-                        SessionWatchdog.Problem.HEARTBEAT_MISSING -> "Связь с камерой потеряна" to "Пропали служебные сигналы. Проверьте Wi-Fi и телефон у ребёнка"
-                        SessionWatchdog.Problem.VIDEO_MISSING -> "Видеосигнал пропал" to "Соединение активно, но кадры с камеры не поступают"
+                val now = SystemClock.elapsedRealtime()
+                val problem = watchdog.problem(now)
+                val state = MonitorBus.state.value
+                val issue = when {
+                    problem != null -> problem.name
+                    !iceConnected.get() -> null
+                    state.remoteCameraFault -> "CAMERA_FAULT"
+                    state.cameraMicEnabled && state.microphoneCaptureHealthy == false -> "MICROPHONE_STALLED"
+                    else -> null
+                }
+                val previous = incidentAlarm.activeProblem()
+                val shouldNotify = incidentAlarm.observe(issue, now)
+                if (issue == null && previous != null) {
+                    getSystemService(NotificationManager::class.java).cancel(401)
+                    MonitorBus.mutate { it.copy(incidentTitle = "", incidentAcknowledged = false) }
+                } else if (issue != null && (previous != issue || shouldNotify)) {
+                    val (title, details) = when (issue) {
+                        "NEVER_CONNECTED" -> "Камера не подключилась" to
+                            "Проверьте Wi-Fi и включённый режим камеры на втором телефоне."
+                        "CONNECTION_LOST" -> "Соединение с камерой потеряно" to
+                            "Подключение не восстановилось. Проверьте телефоны и сеть."
+                        "HEARTBEAT_MISSING" -> "Нет ответа от камеры" to
+                            "Служебные сигналы перестали поступать. Проверяем соединение."
+                        "VIDEO_MISSING" -> "Изображение остановилось" to
+                            "Соединение есть, но новые видеокадры не поступают."
+                        "CAMERA_FAULT" -> "Не удалось восстановить съёмку" to
+                            "На телефоне камеры остановилась передача кадров."
+                        else -> "Микрофон камеры не работает" to
+                            "С телефона камеры перестали поступать отсчёты микрофона."
                     }
-                    MonitorBus.mutate { it.copy(connected = false, status = title, error = details) }
-                    alert(title, details, 401)
-                    connector?.forceReconnect()
+                    MonitorBus.mutate { it.copy(
+                        incidentTitle = title,
+                        incidentAcknowledged = incidentAlarm.isAcknowledged(),
+                        status = if (issue == "MICROPHONE_STALLED") it.status else title,
+                        error = details
+                    ) }
+                    if (shouldNotify) alert(title, details, 401)
+                    if (previous != issue &&
+                        (issue == "VIDEO_MISSING" || issue == "HEARTBEAT_MISSING")) {
+                        connector?.forceReconnect()
+                    }
                 }
             }
         } catch (e: Exception) { Log.w("MonitorService", "Periodic check failed", e) }
@@ -606,13 +687,24 @@ class MonitorService : Service() {
     private fun alert(title: String, text: String, id: Int) {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            manager.notify(id, Notification.Builder(this, ALERT_CHANNEL)
+            val builder = Notification.Builder(this, ALERT_CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setAutoCancel(true)
                 .setContentIntent(notificationIntent())
-                .build())
+            if (id == 401) {
+                val acknowledge = PendingIntent.getService(
+                    this, 401, Intent(this, MonitorService::class.java).apply {
+                        action = ACTION_ACK_ALERT
+                    }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                builder.addAction(Notification.Action.Builder(
+                    android.R.drawable.ic_menu_close_clear_cancel,
+                    "Подтвердить предупреждение", acknowledge
+                ).build())
+            }
+            manager.notify(id, builder.build())
         }
         try {
             val tone = ToneGenerator(AudioManager.STREAM_ALARM, 85)

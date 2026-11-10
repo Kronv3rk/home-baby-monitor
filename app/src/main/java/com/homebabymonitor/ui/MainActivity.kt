@@ -178,6 +178,7 @@ class MainActivity : ComponentActivity() {
                     startParent = { ip, pin -> startSession(Role.PARENT, ip, pin) },
                     scanQr = { scanQr() },
                     stop = { sendCommand(MonitorService.ACTION_STOP) },
+                    acknowledgeAlert = { sendCommand(MonitorService.ACTION_ACK_ALERT) },
                     talk = { on -> sendCommand(MonitorService.ACTION_TALK, on) },
                     night = { on -> sendCommand(MonitorService.ACTION_NIGHT, on) },
                     torch = { on -> sendCommand(MonitorService.ACTION_TORCH, on) },

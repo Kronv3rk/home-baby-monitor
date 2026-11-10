@@ -94,6 +94,19 @@ class AdaptiveVideoPolicy {
         return active
     }
 
+    /**
+     * Keep the controller aligned with the mode that was actually applied to the camera.
+     * External downgrades, recovery and failed capture changes must not leave a stale
+     * controller target that causes repeated oscillation.
+     */
+    fun applied(profile: VideoQuality, nowMs: Long) {
+        if (profile !in ordered || active == profile) return
+        active = profile
+        good = 0
+        bad = 0
+        lastSwitchMs = nowMs
+    }
+
     /** WebRTC adapts bitrate continuously; camera capture changes only after sustained evidence. */
     fun accept(health: ReceptionHealth, profiles: List<VideoQuality>, nowMs: Long): VideoQuality? {
         if (!health.valid || profiles.isEmpty()) return null

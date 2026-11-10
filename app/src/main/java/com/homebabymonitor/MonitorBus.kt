@@ -35,6 +35,11 @@ data class MonitorState(
     val speakerEnabled: Boolean = true,
     val playbackVolume: Int = 100,
     val talking: Boolean = false,
+    val microphoneCaptureHealthy: Boolean? = null,
+    val cameraRecoveryStatus: String = "",
+    val remoteCameraFault: Boolean = false,
+    val incidentTitle: String = "",
+    val incidentAcknowledged: Boolean = false,
     val error: String = ""
 )
 

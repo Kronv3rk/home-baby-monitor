@@ -1,0 +1,5 @@
+HomeBabyMonitor 0.5.1 pre-release request.
+Sign with the existing permanent keystore after all required CI checks pass.
+Reliability changes: frozen capture recovery, repeated disconnect warnings,
+acknowledgement, audio-capture heartbeat and adaptive state reconciliation.
+Do not claim tests on physical devices or assured alarm delivery.
