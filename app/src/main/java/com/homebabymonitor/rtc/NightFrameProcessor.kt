@@ -28,6 +28,7 @@ class NightFrameProcessor(private val onCapture: (Int, Int) -> Unit = { _, _ -> 
         budget.decide(enabled, lastWidth, lastHeight, requestedFps, System.nanoTime())
     ) {
         NightFrameBudget.Decision.DISABLED -> "OFF"
+        NightFrameBudget.Decision.WAITING -> "WAITING"
         NightFrameBudget.Decision.SOFTWARE -> "SOFTWARE"
         NightFrameBudget.Decision.TOO_EXPENSIVE -> "PASSTHROUGH"
         NightFrameBudget.Decision.OVERLOADED -> "COOLDOWN"
@@ -59,9 +60,11 @@ class NightFrameProcessor(private val onCapture: (Int, Int) -> Unit = { _, _ -> 
                 null
             }
         if (source == null) {
+            budget.observeFailure(System.nanoTime())
             destination.onFrame(frame)
             return
         }
+        var failed = false
         try {
             val copy = JavaI420Buffer.allocate(source.width, source.height)
             try {
@@ -78,10 +81,13 @@ class NightFrameProcessor(private val onCapture: (Int, Int) -> Unit = { _, _ -> 
                 if (adjusted == null) copy.release()
             }
         } catch (e: RuntimeException) {
+            failed = true
             Log.w("NightFrameProcessor", "Night correction failed; preserving original frame", e)
         } finally {
             source.release()
-            budget.observeCost(System.nanoTime() - began, System.nanoTime())
+            val now = System.nanoTime()
+            if (failed) budget.observeFailure(now)
+            else budget.observeCost(now - began, now)
         }
         val delivered = adjusted
         if (delivered == null) destination.onFrame(frame)
