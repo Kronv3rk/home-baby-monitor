@@ -51,7 +51,8 @@ internal fun MonitorScreen(
     speaker: (Boolean) -> Unit,
     playbackVolume: (Int) -> Unit,
     music: (SleepSound, Int, Int) -> Unit,
-    musicVolume: (Int) -> Unit
+    musicVolume: (Int) -> Unit,
+    acknowledgeAlert: () -> Unit
 ) {
     val context = LocalContext.current
     var fullscreen by remember { mutableStateOf(false) }
@@ -69,6 +70,26 @@ internal fun MonitorScreen(
             Text("Домашняя няня", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
             Box(Modifier.size(8.dp).background(if (state.connected) teal else faint, CircleShape))
+        }
+        if (state.role == Role.PARENT && state.incidentTitle.isNotBlank()) {
+            Surface(color = Color(0xFF57342D), shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.WarningAmber, null, tint = coral)
+                        Spacer(Modifier.width(9.dp))
+                        Text(state.incidentTitle, color = Color.White,
+                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Text(if (state.incidentAcknowledged)
+                        "Предупреждение подтверждено. Проверка соединения продолжается."
+                        else "Если проблема сохраняется, предупреждение повторится через минуту.",
+                        color = Color.White, fontSize = 12.sp, lineHeight = 18.sp)
+                    if (!state.incidentAcknowledged) TextButton(onClick = acknowledgeAlert) {
+                        Text("Подтвердить предупреждение")
+                    }
+                }
+            }
         }
         if (state.error.isNotBlank()) {
             Surface(
