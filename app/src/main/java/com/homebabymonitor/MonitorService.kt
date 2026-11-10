@@ -556,6 +556,19 @@ class MonitorService : Service() {
         try {
             pipe?.send(WireMessage.Ping)
             if (role == Role.BABY) {
+                when (engine?.recoverFrozenCapture()) {
+                    CaptureRecoveryGate.Action.RESTART -> {
+                        captureRepairPending = true
+                        MonitorBus.mutate { it.copy(cameraRecoveryStatus = "Перезапускаем съёмку…") }
+                    }
+                    CaptureRecoveryGate.Action.EXHAUSTED -> {
+                        MonitorBus.mutate { it.copy(
+                            cameraRecoveryStatus = "Съёмка остановилась; попытки восстановления исчерпаны",
+                            error = "Нет новых кадров с камеры. Проверьте телефон у ребёнка.") }
+                        engine?.sendControl("CAMERA_FAULT")
+                    }
+                    else -> Unit
+                }
                 engine?.pollSenderCodec { codec ->
                     wifiHandler.post {
                         if (running.get() && role == Role.BABY) {
@@ -578,6 +591,7 @@ class MonitorService : Service() {
                     }
                 }
                 engine?.sendControl("MIC_STATUS:${if (MonitorBus.state.value.cameraMicEnabled) 1 else 0}")
+                engine?.sendControl("MIC_CAPTURE:${engine?.microphoneCaptureStatus(SystemClock.elapsedRealtime()) ?: "UNKNOWN"}")
                 val sound = sleepPlayer.currentSound()
                 val remaining = sleepPlayer.remainingSeconds()
                 MonitorBus.mutate { it.copy(musicSound = sound.name, musicRemainingSeconds = remaining) }
@@ -602,17 +616,47 @@ class MonitorService : Service() {
                     onFeedback = { health -> engine?.sendControl(health.encode()) },
                     onTiming = { timing -> MonitorBus.mutate { it.copy(videoTiming = timing) } }
                 )
-                val problem = watchdog.problem(SystemClock.elapsedRealtime())
-                if (problem != null && !alarmedForOutage) {
-                    alarmedForOutage = true
-                    val (title, details) = when (problem) {
-                        SessionWatchdog.Problem.NEVER_CONNECTED -> "Камера не подключилась" to "Не удалось получить первоначальное соединение с камерой"
-                        SessionWatchdog.Problem.HEARTBEAT_MISSING -> "Связь с камерой потеряна" to "Пропали служебные сигналы. Проверьте Wi-Fi и телефон у ребёнка"
-                        SessionWatchdog.Problem.VIDEO_MISSING -> "Видеосигнал пропал" to "Соединение активно, но кадры с камеры не поступают"
+                val now = SystemClock.elapsedRealtime()
+                val problem = watchdog.problem(now)
+                val state = MonitorBus.state.value
+                val issue = when {
+                    problem != null -> problem.name
+                    !iceConnected.get() -> null
+                    state.remoteCameraFault -> "CAMERA_FAULT"
+                    state.cameraMicEnabled && state.microphoneCaptureHealthy == false -> "MICROPHONE_STALLED"
+                    else -> null
+                }
+                val previous = incidentAlarm.activeProblem()
+                val shouldNotify = incidentAlarm.observe(issue, now)
+                if (issue == null && previous != null) {
+                    getSystemService(NotificationManager::class.java).cancel(401)
+                    MonitorBus.mutate { it.copy(incidentTitle = "", incidentAcknowledged = false) }
+                } else if (issue != null && (previous != issue || shouldNotify)) {
+                    val (title, details) = when (issue) {
+                        "NEVER_CONNECTED" -> "Камера не подключилась" to
+                            "Проверьте Wi-Fi и включённый режим камеры на втором телефоне."
+                        "CONNECTION_LOST" -> "Соединение с камерой потеряно" to
+                            "Подключение не восстановилось. Проверьте телефоны и сеть."
+                        "HEARTBEAT_MISSING" -> "Нет ответа от камеры" to
+                            "Служебные сигналы перестали поступать. Проверяем соединение."
+                        "VIDEO_MISSING" -> "Изображение остановилось" to
+                            "Соединение есть, но новые видеокадры не поступают."
+                        "CAMERA_FAULT" -> "Не удалось восстановить съёмку" to
+                            "На телефоне камеры остановилась передача кадров."
+                        else -> "Микрофон камеры не работает" to
+                            "С телефона камеры перестали поступать отсчёты микрофона."
                     }
-                    MonitorBus.mutate { it.copy(connected = false, status = title, error = details) }
-                    alert(title, details, 401)
-                    connector?.forceReconnect()
+                    MonitorBus.mutate { it.copy(
+                        incidentTitle = title,
+                        incidentAcknowledged = incidentAlarm.isAcknowledged(),
+                        status = if (issue == "MICROPHONE_STALLED") it.status else title,
+                        error = details
+                    ) }
+                    if (shouldNotify) alert(title, details, 401)
+                    if (previous != issue &&
+                        (issue == "VIDEO_MISSING" || issue == "HEARTBEAT_MISSING")) {
+                        connector?.forceReconnect()
+                    }
                 }
             }
         } catch (e: Exception) { Log.w("MonitorService", "Periodic check failed", e) }
