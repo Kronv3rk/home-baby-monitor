@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
     paths:
-      - '.github/release-requests/v0.5.1.txt'
+      - '.github/release-requests/v0.5.2.txt'
 
 permissions:
   contents: write
