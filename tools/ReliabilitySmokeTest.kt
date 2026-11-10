@@ -47,5 +47,13 @@ fun main() {
     watchdog.heartbeat(41_000)
     watchdog.videoFrame(41_000)
     check(watchdog.problem(41_001) == null)
+    val adaptation = AdaptiveVideoPolicy()
+    val profiles = listOf(VideoQuality.HD, VideoQuality.FHD_30, VideoQuality.FHD_60)
+    check(adaptation.reset(profiles, 0) == VideoQuality.FHD_30)
+    adaptation.applied(VideoQuality.HD, 10_000)
+    check(adaptation.active == VideoQuality.HD)
+    repeat(7) { check(adaptation.accept(ReceptionHealth(30.0, 0.0, 40.0), profiles,
+        42_000 + it * 2_000L) == null) }
+    check(adaptation.accept(ReceptionHealth(30.0, 0.0, 40.0), profiles, 56_000) == VideoQuality.FHD_30)
     println("Capture recovery, repeated/acknowledged alarms, reconnect watchdog: OK")
 }
