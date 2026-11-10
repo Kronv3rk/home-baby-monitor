@@ -66,6 +66,9 @@ class RtcEngine(
     private var negotiatedVideoCodec: String? = null
     private var thermalSevere = false
     private val adaptive = AdaptiveVideoPolicy()
+    private var autoInitialized = false
+    @Volatile private var lastMicrophoneSamplesAt = 0L
+    @Volatile private var audioPeerConnectedAt = 0L
     private var supportedCodecNames = ""
     @Volatile private var measuredReceiveFps = 0.0
     private var previousReceivedPackets = -1L
@@ -125,6 +128,7 @@ class RtcEngine(
             .setUseHardwareNoiseSuppressor(true)
             .setSamplesReadyCallback { samples ->
                 if (role == Role.BABY && cameraMicEnabled && samples.audioFormat == AudioFormat.ENCODING_PCM_16BIT) {
+                    lastMicrophoneSamplesAt = android.os.SystemClock.elapsedRealtime()
                     if (audioDetector.feed(samples.data, samples.sampleRate, samples.channelCount, android.os.SystemClock.elapsedRealtime())) {
                         sendControl("SOUND")
                         onControl("LOCAL_SOUND")
@@ -176,8 +180,13 @@ class RtcEngine(
 
     @Synchronized private fun initialCameraQuality(): VideoQuality {
         val allowed = eligibleProfiles()
-        return if (requestedQuality == VideoQuality.AUTO) adaptive.reset(allowed, android.os.SystemClock.elapsedRealtime())
-            else AdaptiveVideoPolicy.limitManual(requestedQuality, allowed)
+        if (requestedQuality != VideoQuality.AUTO)
+            return AdaptiveVideoPolicy.limitManual(requestedQuality, allowed)
+        if (!autoInitialized || adaptive.active !in allowed) {
+            autoInitialized = true
+            return adaptive.reset(allowed, android.os.SystemClock.elapsedRealtime())
+        }
+        return adaptive.active
     }
 
     private fun openCamera() {
@@ -241,7 +250,11 @@ class RtcEngine(
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
                 if (myGeneration != peerGeneration || closing.get()) return
                 when (state) {
-                    PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> onConnection(true)
+                    PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> {
+                        if (role == Role.BABY && audioPeerConnectedAt == 0L)
+                            audioPeerConnectedAt = android.os.SystemClock.elapsedRealtime()
+                        onConnection(true)
+                    }
                     PeerConnection.IceConnectionState.FAILED, PeerConnection.IceConnectionState.DISCONNECTED,
                     PeerConnection.IceConnectionState.CLOSED -> onConnection(false)
                     else -> Unit
@@ -312,7 +325,18 @@ class RtcEngine(
     fun setCameraMicrophone(enabled: Boolean) {
         if (role != Role.BABY) return
         cameraMicEnabled = enabled
+        if (enabled) lastMicrophoneSamplesAt = 0L
         audioTrack?.setEnabled(enabled)
+    }
+
+    /** A local capture-sample heartbeat, not a claim of audible sound at the monitor. */
+    fun microphoneCaptureStatus(nowMillis: Long): String {
+        if (role != Role.BABY || !cameraMicEnabled) return "OFF"
+        if (audioPeerConnectedAt <= 0L) return "UNKNOWN"
+        val last = lastMicrophoneSamplesAt
+        if (last > 0L && nowMillis >= last && nowMillis - last <= 10_000) return "ON"
+        return if (nowMillis >= audioPeerConnectedAt &&
+            nowMillis - audioPeerConnectedAt >= 15_000) "STALLED" else "UNKNOWN"
     }
 
     /** Report actual received video bandwidth; ICE and encoder control remain adaptive. */
@@ -527,7 +551,7 @@ class RtcEngine(
      * Must be called on a service worker, never on the main/UI or capture thread.
      */
     @Synchronized fun recoverFrozenCapture(): CaptureRecoveryGate.Action {
-        if (role != Role.BABY || capturer == null || closing.get()) return CaptureRecoveryGate.Action.NONE
+        if (role != Role.BABY || capturer == null) return CaptureRecoveryGate.Action.NONE
         val action = recovery.next(android.os.SystemClock.elapsedRealtime())
         if (action != CaptureRecoveryGate.Action.RESTART) return action
         val current = capturer ?: return CaptureRecoveryGate.Action.NONE
@@ -539,6 +563,9 @@ class RtcEngine(
             val selected = chooseCapture(request)
             current.startCapture(selected.width, selected.height, selected.fps)
             currentCapture = selected
+            qualityProfile = request
+            adaptive.applied(request, android.os.SystemClock.elapsedRealtime())
+            updateEncoderBitrate()
             Log.w("RtcEngine", "Restarted camera capturer after no frames")
         } catch (e: Exception) {
             Log.e("RtcEngine", "Camera capture recovery failed", e)
@@ -554,6 +581,7 @@ class RtcEngine(
             capturer?.changeCaptureFormat(requested.width, requested.height, requested.fps)
             currentCapture = requested
             qualityProfile = next
+            adaptive.applied(next, android.os.SystemClock.elapsedRealtime())
             updateEncoderBitrate()
             peer?.let { connection ->
                 try { connection.setBitrate(null, minOf(next.maxBitrateBps / 2, 3_000_000), next.maxBitrateBps) }
@@ -566,6 +594,8 @@ class RtcEngine(
     }
 
     @Synchronized fun setQuality(value: VideoQuality): CaptureOption {
+        if (value == VideoQuality.AUTO && requestedQuality != VideoQuality.AUTO)
+            autoInitialized = false
         requestedQuality = value
         return applyCameraQuality(initialCameraQuality())
     }
@@ -666,6 +696,8 @@ class RtcEngine(
             receiverLimit = VideoEndpointLimit.UNKNOWN
             receiverCodecBudgets = VideoCodecBudgets(emptyMap())
             negotiatedVideoCodec = null
+            audioPeerConnectedAt = 0L
+            autoInitialized = false
         }
         videoSender = null
         try { peer?.close() } catch (_: Exception) {}
