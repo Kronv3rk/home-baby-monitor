@@ -34,6 +34,16 @@ import org.webrtc.SurfaceViewRenderer
 import java.util.Locale
 import kotlin.math.roundToInt
 
+/** The requested night mode may deliberately bypass CPU processing at high frame rates. */
+private fun nightProcessingLabel(status: String): String = when (status.substringBefore(':')) {
+    "OFF" -> "Коррекция выключена"
+    "WAITING" -> "Ожидание первых кадров от камеры"
+    "SOFTWARE" -> "Коррекция яркости · обработка около ${status.substringAfter(':', "0")} мс/кадр"
+    "PASSTHROUGH" -> "Кадры передаются без программной коррекции, чтобы сохранить разрешение и скорость"
+    "COOLDOWN" -> "Коррекция временно приостановлена из-за нагрузки на процессор"
+    else -> "Состояние коррекции уточняется"
+}
+
 @Composable
 internal fun MonitorScreen(
     state: MonitorState,
@@ -290,6 +300,10 @@ private fun BabyCameraScreen(
         Text("Состояние камеры", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         Detail("Режим", VideoQuality.fromWire(state.actualVideoQuality)?.title ?: "—")
         Detail("Ночной режим", if (state.nightMode) "Включён" else "Выключен")
+        if (state.nightMode) {
+            Text(nightProcessingLabel(state.nightProcessingStatus), color = muted,
+                fontSize = 12.sp, lineHeight = 18.sp)
+        }
         if (state.cameraRecoveryStatus.isNotBlank())
             Detail("Состояние видеозахвата", state.cameraRecoveryStatus)
         Detail("Звуки для сна", SleepSound.fromWire(state.musicSound)?.title ?: "Выключены")
@@ -366,6 +380,10 @@ private fun ParentMonitorScreen(
                 label = { Text("Ночная съёмка") }, leadingIcon = { Icon(Icons.Default.NightsStay, null, Modifier.size(16.dp)) })
             FilterChip(selected = state.torchOn, onClick = { torch(!state.torchOn) },
                 label = { Text("Фонарик") }, leadingIcon = { Icon(Icons.Default.FlashlightOn, null, Modifier.size(16.dp)) })
+        }
+        if (state.nightMode) {
+            Text(nightProcessingLabel(state.nightProcessingStatus), color = muted,
+                fontSize = 12.sp, lineHeight = 18.sp)
         }
         Text("Нажмите и удерживайте для разговора", color = muted, fontSize = 12.sp)
         val isTalking by rememberUpdatedState(state.talking)

@@ -1,0 +1,6 @@
+HomeBabyMonitor 0.5.2 signed prerelease request.
+Performance: zero-copy high-resolution night-mode passthrough,
+frame-budgeted software correction, bulk I420 row transfers,
+actual processing-path status on both devices.
+Run required CI, signing certificate verification, APK alignment checks.
+Physical device 4K60 performance and GPU low-light enhancement remain unverified.
