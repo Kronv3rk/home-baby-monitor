@@ -211,6 +211,7 @@ class RtcEngine(
             MonitorBus.setCameraVideoTrack(videoTrack)
             qualityProfile = initialCameraQuality()
             currentCapture = chooseCapture(qualityProfile)
+            night.configureCaptureFps(currentCapture.fps)
             recovery.start(android.os.SystemClock.elapsedRealtime())
             capturer?.startCapture(currentCapture.width, currentCapture.height, currentCapture.fps)
         } catch (e: Exception) { onError("Ошибка запуска камеры: ${e.message}") }
@@ -563,6 +564,7 @@ class RtcEngine(
             val selected = chooseCapture(request)
             current.startCapture(selected.width, selected.height, selected.fps)
             currentCapture = selected
+            night.configureCaptureFps(selected.fps)
             qualityProfile = request
             adaptive.applied(request, android.os.SystemClock.elapsedRealtime())
             updateEncoderBitrate()
@@ -580,6 +582,7 @@ class RtcEngine(
         try {
             capturer?.changeCaptureFormat(requested.width, requested.height, requested.fps)
             currentCapture = requested
+            night.configureCaptureFps(requested.fps)
             qualityProfile = next
             adaptive.applied(next, android.os.SystemClock.elapsedRealtime())
             updateEncoderBitrate()
@@ -674,6 +677,10 @@ class RtcEngine(
     fun setNight(value: Boolean) {
         night.enabled = value
     }
+
+    /** Returns the actual processing path, never just the requested night toggle. */
+    fun nightProcessingStatus(): String =
+        "${night.modeCode()}:${night.lastProcessingMs().coerceIn(0, 5000)}"
 
     @Synchronized fun closePeer() {
         closing.set(true)
